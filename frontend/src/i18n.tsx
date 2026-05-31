@@ -16,6 +16,16 @@ const translations = {
     'sidebar.securityPolicy': '安全策略',
     'sidebar.newSession': '新建会话',
     'sidebar.deleteSession': '删除会话',
+    'sidebar.enterprise': '企业版',
+    'sidebar.enterpriseBadge': '企业版',
+    'sidebar.localModelGateway': '本地模型网关',
+    'sidebar.auditLog': '审计日志',
+    'sidebar.userManagement': '用户管理',
+    'sidebar.multiModel': '多模型编排',
+    'sidebar.hardwareAppliance': '硬件一体机',
+    'sidebar.policyEngine': '策略引擎',
+    'sidebar.comingSoon': '即将推出',
+    'sidebar.contactSales': '联系销售',
 
     // Header
     'header.searchPlaceholder': '搜索凭证库...',
@@ -190,6 +200,16 @@ const translations = {
     'sidebar.securityPolicy': 'Security Policy',
     'sidebar.newSession': 'New Session',
     'sidebar.deleteSession': 'Delete Session',
+    'sidebar.enterprise': 'Enterprise',
+    'sidebar.enterpriseBadge': 'Enterprise',
+    'sidebar.localModelGateway': 'Local Model Gateway',
+    'sidebar.auditLog': 'Audit Log',
+    'sidebar.userManagement': 'User Management',
+    'sidebar.multiModel': 'Multi-Model Routing',
+    'sidebar.hardwareAppliance': 'Hardware Appliance',
+    'sidebar.policyEngine': 'Policy Engine',
+    'sidebar.comingSoon': 'Coming Soon',
+    'sidebar.contactSales': 'Contact Sales',
 
     // Header
     'header.searchPlaceholder': 'Search Vault...',

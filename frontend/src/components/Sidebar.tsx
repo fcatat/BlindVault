@@ -3,7 +3,8 @@ import { ViewState } from '../types';
 import { useI18n } from '../i18n';
 import { 
   ShieldAlert, Plus, MessageSquare, Key, SquareTerminal, 
-  Bot, FileText, FileBadge, PlusCircle, Trash2
+  Bot, FileText, FileBadge, PlusCircle, Trash2,
+  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Crown, Sparkles
 } from 'lucide-react';
 
 export interface SessionInfo {
@@ -53,7 +54,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* 会话列表 */}
+      {/* Sessions */}
       <div className="px-4 mb-4">
         <div className="flex items-center justify-between mb-2 px-2">
           <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">{t('sidebar.sessions')}</span>
@@ -98,6 +99,7 @@ export function Sidebar({
         </div>
       </div>
 
+      {/* Core Features */}
       <div className="flex-1 px-4 space-y-1">
         <NavItem 
           icon={<Key className="w-4 h-4" />} 
@@ -117,8 +119,46 @@ export function Sidebar({
           isActive={activeView === 'config'} 
           onClick={() => onNavigate('config')} 
         />
+
+        {/* Enterprise Section */}
+        <div className="pt-5 pb-1 px-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">{t('sidebar.enterprise')}</span>
+            <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-700 border border-amber-500/30">
+              <Crown className="w-2.5 h-2.5 inline-block mr-0.5 -mt-0.5" />
+              PRO
+            </span>
+          </div>
+        </div>
+
+        <EnterpriseNavItem 
+          icon={<Cpu className="w-4 h-4" />} 
+          label={t('sidebar.localModelGateway')}
+        />
+        <EnterpriseNavItem 
+          icon={<Users className="w-4 h-4" />} 
+          label={t('sidebar.userManagement')}
+          sublabel="SSO / LDAP / OIDC"
+        />
+        <EnterpriseNavItem 
+          icon={<ClipboardList className="w-4 h-4" />} 
+          label={t('sidebar.auditLog')}
+        />
+        <EnterpriseNavItem 
+          icon={<Layers className="w-4 h-4" />} 
+          label={t('sidebar.multiModel')}
+        />
+        <EnterpriseNavItem 
+          icon={<ShieldCheck className="w-4 h-4" />} 
+          label={t('sidebar.policyEngine')}
+        />
+        <EnterpriseNavItem 
+          icon={<Server className="w-4 h-4" />} 
+          label={t('sidebar.hardwareAppliance')}
+        />
       </div>
 
+      {/* Footer */}
       <div className="p-4 border-t border-outline-variant space-y-1 mt-auto">
         <a href="#" className="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-highest hover:text-on-surface transition-all duration-200 cursor-pointer active:opacity-80 rounded">
           <FileText className="w-4 h-4" />
@@ -147,6 +187,33 @@ function NavItem({ icon, label, isActive, onClick }: { icon: React.ReactNode, la
     <div className="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-surface-container-highest hover:text-on-surface transition-all duration-200 cursor-pointer active:opacity-80 rounded" onClick={onClick}>
       {icon}
       <span className="text-sm">{label}</span>
+    </div>
+  );
+}
+
+function EnterpriseNavItem({ icon, label, sublabel }: { icon: React.ReactNode, label: string, sublabel?: string }) {
+  const { t } = useI18n();
+
+  return (
+    <div 
+      className="group relative flex items-center gap-3 text-on-surface-variant/50 px-4 py-2 rounded cursor-default transition-all duration-200 hover:bg-surface-container-low"
+      title={t('sidebar.comingSoon')}
+    >
+      <span className="opacity-40">{icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm opacity-60 truncate">{label}</span>
+          <Lock className="w-3 h-3 opacity-30 shrink-0" />
+        </div>
+        {sublabel && (
+          <span className="text-[10px] opacity-40 font-mono">{sublabel}</span>
+        )}
+      </div>
+      {/* Hover tooltip */}
+      <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-inverse-surface text-inverse-on-surface text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
+        <Sparkles className="w-3 h-3 inline-block mr-1 -mt-0.5 text-amber-400" />
+        {t('sidebar.enterpriseBadge')}
+      </div>
     </div>
   );
 }
