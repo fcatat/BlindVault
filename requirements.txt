@@ -1,0 +1,17 @@
+# ---- 核心 ----
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+redis[hiredis]>=5.2.0
+cryptography>=44.0.0
+pydantic-settings>=2.7.0
+
+# ---- LangGraph / LangChain ----
+langgraph>=0.4.0
+langchain-core>=0.3.0
+langchain-openai>=0.3.0
+
+# ---- 测试 ----
+pytest>=8.0.0
+pytest-asyncio>=0.25.0
+httpx>=0.28.0
+fakeredis>=2.26.0
