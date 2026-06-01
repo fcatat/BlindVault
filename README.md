@@ -72,6 +72,16 @@ User Input ──→ [Auto Sanitizer] ──→ LLM (only sees {{secret:sec_xxx}
 
 ## Quick Start
 
+### One-Line Install (Docker)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fcatat/BlindVault/main/install.sh | bash
+```
+
+> Only requires Docker & Git. The installer will guide you through port configuration and optional LLM setup.
+
+### Manual Install
+
 ### Prerequisites
 
 - Python 3.11+

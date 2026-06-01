@@ -72,6 +72,16 @@ AI 执行命令，密码留在保险箱里。始终如此。
 
 ## 快速开始
 
+### 一键安装（Docker）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/fcatat/BlindVault/main/install.sh | bash
+```
+
+> 仅需 Docker 和 Git。安装脚本会引导你配置端口和 LLM（可跳过，稍后在 Web 界面配置）。
+
+### 手动安装
+
 ### 环境要求
 
 - Python 3.11+
