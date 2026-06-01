@@ -4,8 +4,6 @@
 
 **AI Sees Nothing. Ops Lose Nothing.**
 
-让 AI Agent 执行运维操作，密码永远不出保险箱。
-
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
