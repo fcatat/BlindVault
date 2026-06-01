@@ -1,315 +1,207 @@
-# BlindVault — LLM Agent Secret Reference System
+<div align="center">
 
-> 让 secret 永远不进入 LLM prompt
+# 🔐 BlindVault
 
-## 概述
+**AI Sees Nothing. Ops Lose Nothing.**
 
-BlindVault 是一个面向 LLM Agent 的 **Secret Reference System（密钥引用系统）**。
+让 AI Agent 执行运维操作，密码永远不出保险箱。
 
-**核心原则**：真实密码、API key、token、数据库密码等 secret **永远不能进入 LLM prompt**。模型只能看到 `secret_ref`（如 `{{secret:sec_live_xxx}}`）；只有后端 Tool Executor 可以在严格权限校验后解析 secret_ref，并把真实 secret 临时用于工具执行。
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
 
-## 架构
+</div>
+
+---
+
+## What is BlindVault?
+
+BlindVault is an **AI-powered ops security platform** that lets DevOps teams use LLM agents for infrastructure tasks — database queries, SSH, API calls — while ensuring **passwords and secrets are NEVER exposed to the AI model**.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        前端 / 用户                            │
-│  1. 创建 secret → 获得 sec_live_xxx                          │
-│  2. 发送消息: "用 {{secret:sec_live_xxx}} 登录 example.com"   │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    FastAPI 后端                               │
-│                                                              │
-│  ┌──────────┐    ┌──────────────────┐    ┌───────────────┐  │
-│  │ Secret   │    │ LangGraph Agent  │    │ 日志脱敏      │  │
-│  │ Store API│    │                  │    │ 中间件        │  │
-│  │          │    │ chatbot ──→ LLM  │    │               │  │
-│  │ 加密存储 │    │   ↓        (只看  │    │ • 字段脱敏    │  │
-│  │ Redis    │    │   ↓     secret_ref) │  │ • ref 脱敏    │  │
-│  └──────────┘    │   ▼               │    │ • 请求体过滤  │  │
-│                  │ SecureToolNode    │    └───────────────┘  │
-│                  │   ├─ denylist 检查 │                       │
-│                  │   ├─ policy 校验   │                       │
-│                  │   ├─ resolve_secret│                       │
-│                  │   └─ 执行 + 脱敏   │                       │
-│                  └──────────────────┘                        │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                     Redis                                    │
-│  • 加密存储 secret (AES-256-GCM)                             │
-│  • 原子递增 read_count                                       │
-│  • TTL 自动过期                                              │
-└─────────────────────────────────────────────────────────────┘
+You type:   postgresql://admin:MyPassword@db.prod/app — show me all tables
+AI sees:    postgresql://admin:{{secret:sec_***}}@db.prod/app — show me all tables
 ```
 
-## 技术栈
+The AI executes the command. The password stays in the vault. Always.
 
-| 组件 | 选型 |
-|------|------|
-| 后端框架 | FastAPI |
-| Agent 框架 | LangGraph（模型无关，支持任意 LLM） |
-| 存储 | Redis（异步 redis-py） |
-| 加密 | AES-256-GCM（cryptography 库） |
-| 测试 | pytest + pytest-asyncio + fakeredis |
+## Architecture
 
-## 快速开始
+```
+User Input ──→ [Auto Sanitizer] ──→ LLM (only sees {{secret:sec_xxx}})
+                    ↓                              ↓
+              [AES-256 Vault]  ←←←  [SecureToolNode: decrypt & inject]
+                (Redis + PG)                       ↓
+                                         [Execute: psql/ssh/curl]
+                                                   ↓
+                                             Result → User
+```
 
-### 1. 环境准备
+**Zero-Knowledge Guarantee**: Secrets never enter the AI context window. Not in the prompt, not in the history, not in the logs.
+
+## Features
+
+### Community Edition (Free & Open Source)
+
+| Feature | Description |
+|---------|-------------|
+| 🔍 **Auto Sanitization** | Regex-based detection of passwords, tokens, API keys, connection strings |
+| 🔐 **AES-256-GCM Encryption** | All secrets encrypted at rest with configurable key |
+| 🛡️ **Secure Shell Tool** | Execute psql, ssh, curl, mysql, redis-cli — AI never sees the password |
+| ⏱️ **TTL & Read Limits** | Secrets auto-expire; configurable max reads per secret |
+| 📝 **History Sanitization** | Conversation history uses sanitized text — no password leaks in multi-turn |
+| 🌐 **i18n** | Full English/Chinese support with one-click toggle |
+| 🤖 **Any LLM** | OpenAI-compatible API (GPT, Claude, Qwen, DeepSeek, local models via LiteLLM) |
+| 📊 **Execution Trace** | Visual audit trail of every tool call and secret access |
+| 💾 **Persistent Config** | PostgreSQL-backed LLM configuration, survives restarts |
+| 🔒 **Log Redaction** | Middleware sanitizes all request/response logs automatically |
+
+### Enterprise Edition
+
+| Feature | Description |
+|---------|-------------|
+| 🧠 **Local Model Gateway** | Double-layer protection: local LLM sanitizes before cloud LLM processes |
+| 👥 **SSO / LDAP / OIDC** | Enterprise identity integration |
+| 📋 **Audit Log & Compliance** | Every secret access logged, SOC2/ISO27001 exportable |
+| 🔀 **Multi-Model Routing** | Route tasks to different models with policy rules |
+| 🛡️ **Policy Engine** | Fine-grained access control beyond TTL/read-count |
+| 📦 **Hardware Appliance** | Pre-configured box, air-gap ready |
+| 🏢 **Multi-tenant & RBAC** | Team-based access control |
+
+> 📧 Enterprise inquiries: [Contact Sales](mailto:enterprise@blindvault.dev)
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- Redis 7+
+- PostgreSQL 14+
+
+### 1. Clone & Install
 
 ```bash
-# 克隆项目
+git clone https://github.com/fcatat/BlindVault.git
 cd BlindVault
 
-# 创建虚拟环境
-python -m venv venv
-source venv/bin/activate
-
-# 安装依赖
+# Backend
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 
-# 配置环境变量
+# Frontend
+cd frontend && npm install && cd ..
+```
+
+### 2. Configure
+
+```bash
 cp .env.example .env
-# 编辑 .env，生成加密密钥：
+# Edit .env — generate encryption key:
 python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
 ```
 
-### 2. 启动 Redis
+### 3. Start Services
 
 ```bash
-# Docker 方式
+# Redis & PostgreSQL (Docker)
 docker run -d --name blindvault-redis -p 6379:6379 redis:7-alpine
+docker run -d --name blindvault-pg -p 5432:5432 -e POSTGRES_DB=blindvault -e POSTGRES_PASSWORD=postgres postgres:16-alpine
 
-# 或本地 Redis
-redis-server
-```
-
-### 3. 启动后端
-
-```bash
+# Backend (port 8000)
 uvicorn backend.main:app --reload --port 8000
+
+# Frontend (port 3000)
+cd frontend && npm run dev
 ```
 
-访问 Swagger UI：http://localhost:8000/docs
+Open http://localhost:3000 and start chatting!
 
-### 4. 运行测试
+## How It Works
 
-```bash
-pytest backend/tests/ -v
-```
+1. **You talk naturally** — Type credentials in plain language, just like talking to a colleague
+2. **BlindVault intercepts** — Passwords auto-detected, encrypted with AES-256-GCM, stored with TTL
+3. **AI executes blindly** — LLM sees only `{{secret:sec_xxx}}` references. Real credentials injected at the secure execution layer
 
-## API 文档
-
-### Secret 管理
-
-#### `POST /api/secrets` — 创建 Secret
-
-**Headers:**
-| Header | 必需 | 说明 |
-|--------|------|------|
-| X-User-Id | ✅ | 用户 ID |
-| X-Session-Id | ✅ | 会话 ID |
-| X-Tenant-Id | ❌ | 租户 ID（默认 "default"） |
-
-**请求体：**
-```json
-{
-  "secret_type": "password",
-  "label": "GitHub Token",
-  "value": "ghp_xxxxxxxxxxxx",
-  "allowed_tools": ["browser_login_mock"],
-  "allowed_destinations": ["https://github.com"],
-  "ttl_seconds": 3600,
-  "max_reads": 1
-}
-```
-
-**响应（201）：**
-```json
-{
-  "secret_ref": "sec_live_aBcDeFgH12345678",
-  "placeholder": "{{secret:sec_live_aBcDeFgH12345678}}",
-  "label": "GitHub Token",
-  "secret_type": "password",
-  "allowed_tools": ["browser_login_mock"],
-  "allowed_destinations": ["https://github.com"],
-  "expires_at": "2026-05-30T01:00:00Z",
-  "reads_left": 1,
-  "status": "active"
-}
-```
-
-> ⚠️ **注意**：响应中**永远不包含**真实 value
-
-#### `GET /api/secrets` — 列出 Secret 元数据
-
-返回当前用户/会话的所有 secret 元数据（不含 value）。
-
-#### `POST /api/secrets/{secret_ref}/revoke` — 撤销 Secret
-
-将 secret 标记为 `revoked`，之后不能被 resolve。
-
----
-
-### Agent
-
-#### `POST /api/agent/run` — 运行 Agent
-
-**请求体：**
-```json
-{
-  "user_message": "请用 {{secret:sec_live_xxx}} 登录 https://example.com，用户名 admin",
-  "session_id": "session_123"
-}
-```
-
-**响应：**
-```json
-{
-  "reply": "工具执行完毕。结果：{\"login_result\": \"success\", \"url\": \"https://example.com\", \"username\": \"admin\"}",
-  "tool_calls": [
-    {
-      "tool": "browser_login_mock",
-      "args": {
-        "username": "admin",
-        "password_ref": "[REDACTED]",
-        "url": "https://example.com"
-      }
-    }
-  ],
-  "secret_refs_used": ["sec_live_xxx"]
-}
-```
-
----
-
-## 安全模型
-
-### 1. Secret 生命周期
+### Security Model
 
 ```
-创建 (active) → 使用 (reads_left-1) → 耗尽 (exhausted)
-                                     → 过期 (expired)
-                                     → 撤销 (revoked)
+Secret Lifecycle:  Created (active) → Used (reads-1) → Exhausted / Expired / Revoked
+
+Policy Chain (every resolve):
+  ✓ Secret exists        ✓ Status == active     ✓ user_id match
+  ✓ session_id match     ✓ tenant_id match      ✓ tool in allowed_tools
+  ✓ destination match    ✓ Not expired           ✓ read_count < max_reads
+  → Any failure: generic "Secret resolution denied" (no info leak)
 ```
 
-### 2. 权限校验链（resolve_secret）
+### Log Redaction
 
-每次工具执行解析 secret 时，按顺序检查：
-1. Secret 存在
-2. Status == active
-3. user_id 匹配
-4. session_id 匹配
-5. tenant_id 匹配
-6. tool_name 在 allowed_tools 中
-7. destination 在 allowed_destinations 中
-8. 未过期
-9. read_count < max_reads
+- Fields matching `value|password|secret|token|api_key|authorization|cookie` → `[REDACTED]`
+- Secret refs → `sec_live_abcd****`
+- `POST /api/secrets` body never logged
+- Exception traces never dump request bodies
 
-**任何一项失败都返回统一的 `"Secret resolution denied"`，不暴露具体原因。**
+## Tech Stack
 
-### 3. Denylist 工具
+| Layer | Tech |
+|-------|------|
+| Backend | FastAPI + LangGraph + asyncpg + redis-py |
+| Frontend | React 18 + TypeScript + Vite |
+| Encryption | AES-256-GCM (cryptography) |
+| Storage | Redis (secrets) + PostgreSQL (config) |
+| LLM | Any OpenAI-compatible API |
 
-以下"外发型"工具禁止接受 secret_ref：
-- `send_email`
-- `write_file`
-- `web_search`
-- `ask_llm`
-- `generic_http_request`
-
-### 4. 日志脱敏
-
-- 字段名包含 `value|password|secret|token|api_key|authorization|cookie` → `[REDACTED]`
-- secret_ref → `sec_live_abcd****`
-- `POST /api/secrets` 请求体完全不记录
-- 异常日志不 dump 完整请求体
-
----
-
-## 测试指南
-
-### 测试完整工作流
-
-```bash
-# 1. 创建 secret
-curl -X POST http://localhost:8000/api/secrets \
-  -H "Content-Type: application/json" \
-  -H "X-User-Id: user1" \
-  -H "X-Session-Id: sess1" \
-  -d '{
-    "secret_type": "password",
-    "label": "Test Login",
-    "value": "my_password_123",
-    "allowed_tools": ["browser_login_mock"],
-    "allowed_destinations": ["https://example.com"],
-    "max_reads": 1
-  }'
-
-# 记下返回的 secret_ref，例如 sec_live_aBcDeFgH
-
-# 2. 使用 agent 执行登录
-curl -X POST http://localhost:8000/api/agent/run \
-  -H "Content-Type: application/json" \
-  -H "X-User-Id: user1" \
-  -H "X-Session-Id: sess1" \
-  -d '{
-    "user_message": "请用 {{secret:sec_live_aBcDeFgH}} 登录 https://example.com，用户名 admin",
-    "session_id": "sess1"
-  }'
-
-# 3. 验证 secret 已耗尽
-curl -X GET http://localhost:8000/api/secrets \
-  -H "X-User-Id: user1" \
-  -H "X-Session-Id: sess1"
-# reads_left 应该为 0，status 为 "exhausted"
-```
-
-### 安全验证清单
-
-- [ ] 创建 secret 返回中无 value
-- [ ] Redis 存储的是密文
-- [ ] 错误 user/session 不能 resolve
-- [ ] 错误 tool 不能 resolve
-- [ ] 错误 destination 不能 resolve
-- [ ] 过期 secret 不能 resolve
-- [ ] max_reads 耗尽后不能 resolve
-- [ ] 撤销后不能 resolve
-- [ ] browser_login_mock 结果不含密码
-- [ ] 日志中无明文 secret
-- [ ] LLM 只看到 secret_ref
-- [ ] 错误信息统一为 generic
-- [ ] Denylist 工具参数不含 secret_ref
-
-## 项目结构
+## Project Structure
 
 ```
 backend/
-├── main.py              # FastAPI 入口
-├── config.py            # 环境变量配置
-├── crypto.py            # AES-256-GCM 加解密
-├── models.py            # 数据模型
-├── redis_store.py       # Redis 存储
-├── policy.py            # 权限校验引擎
-├── redaction.py         # 日志脱敏
+├── main.py                # FastAPI entry point
+├── config.py              # Environment configuration
+├── crypto.py              # AES-256-GCM encrypt/decrypt
+├── models.py              # Pydantic data models
+├── sanitizer.py           # Auto-detect & replace secrets in messages
+├── redis_store.py         # Redis secret storage
+├── policy.py              # Permission validation engine
+├── redaction.py           # Log redaction middleware
+├── db.py                  # PostgreSQL persistence
 ├── api/
-│   ├── secrets.py       # Secret CRUD API
-│   └── agent.py         # Agent 运行 API
+│   ├── secrets.py         # Secret CRUD API
+│   ├── agent.py           # Agent run API
+│   └── config.py          # LLM config API
 ├── agent/
-│   └── graph.py         # LangGraph Agent
+│   └── graph.py           # LangGraph agent (mock + OpenAI)
 ├── tools/
-│   ├── registry.py      # 工具注册表 + denylist
-│   ├── executor.py      # SecureToolNode
-│   └── browser_login_mock.py  # Demo 工具
+│   ├── registry.py        # Tool registry + denylist
+│   ├── executor.py        # SecureToolNode
+│   ├── secure_shell.py    # Universal secure shell tool
+│   └── browser_login_mock.py
 └── tests/
-    ├── conftest.py      # 测试 fixtures
-    ├── test_secrets_api.py
-    ├── test_policy.py
-    ├── test_tools.py
-    └── test_redaction.py
+
+frontend/
+├── src/
+│   ├── App.tsx             # Main app with session management
+│   ├── api.ts              # Backend API client
+│   ├── i18n.tsx            # Internationalization (en/zh)
+│   └── components/
+│       ├── Chat.tsx        # AI chat with sanitized history
+│       ├── Dashboard.tsx   # Credential vault overview
+│       ├── Sidebar.tsx     # Navigation + Enterprise features
+│       ├── Header.tsx      # Language toggle + user menu
+│       ├── AgentConfig.tsx # LLM configuration
+│       ├── ExecutionTrace.tsx
+│       └── AddCredentialModal.tsx
 ```
 
 ## License
 
-MIT
+**Community Edition** is licensed under [AGPL-3.0](LICENSE).
+
+**Enterprise Edition** is available under a commercial license. [Contact us](mailto:enterprise@blindvault.dev) for details.
+
+---
+
+<div align="center">
+  <sub>Built with 🔐 by the BlindVault Team</sub>
+</div>
