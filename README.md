@@ -10,6 +10,8 @@
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
 
+**English** | [中文](README_CN.md)
+
 </div>
 
 ---
