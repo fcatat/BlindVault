@@ -3,7 +3,7 @@ import { Sidebar, SessionInfo } from './components/Sidebar';
 import { Header } from './components/Header';
 import { Dashboard } from './components/Dashboard';
 import { Chat } from './components/Chat';
-import { ExecutionTrace } from './components/ExecutionTrace';
+import { RulesConfig } from './components/RulesConfig';
 import { AgentConfig } from './components/AgentConfig';
 import { AddCredentialModal } from './components/AddCredentialModal';
 import { ViewState } from './types';
@@ -90,7 +90,7 @@ export default function App() {
               onFirstMessage={(msg) => handleUpdateSessionTitle(activeSessionId, msg)}
             />
           )}
-          {activeView === 'trace' && <ExecutionTrace />}
+          {activeView === 'rules' && <RulesConfig />}
           {activeView === 'config' && <AgentConfig />}
         </main>
       </div>

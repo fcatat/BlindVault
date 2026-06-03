@@ -4,7 +4,7 @@ import { useI18n } from '../i18n';
 import { 
   ShieldAlert, Plus, MessageSquare, Key, SquareTerminal, 
   Bot, FileText, FileBadge, PlusCircle, Trash2,
-  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Crown, Sparkles
+  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Crown, Sparkles, Image, EyeOff
 } from 'lucide-react';
 
 export interface SessionInfo {
@@ -108,10 +108,10 @@ export function Sidebar({
           onClick={() => onNavigate('dashboard')} 
         />
         <NavItem 
-          icon={<SquareTerminal className="w-4 h-4" />} 
-          label={t('sidebar.toolLogs')} 
-          isActive={activeView === 'trace'} 
-          onClick={() => onNavigate('trace')} 
+          icon={<EyeOff className="w-4 h-4" />} 
+          label={t('sidebar.sanitizationRules')} 
+          isActive={activeView === 'rules'} 
+          onClick={() => onNavigate('rules')} 
         />
         <NavItem 
           icon={<Bot className="w-4 h-4" />} 

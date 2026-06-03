@@ -43,39 +43,31 @@ class SensitiveMatch:
     value_end: int
 
 
-_PATTERNS = [
-    # 中文密码模式
-    (
-        r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+)'
-        r'([^\s,，。；;、\n\r]+)',
-        'password',
-        '密码',
-    ),
-    # 英文 password 模式
-    (
-        r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+)'
-        r'([^\s,，。；;、\n\r]+)',
-        'password',
-        'password',
-    ),
-    # token 模式
-    (
-        r'(?:token|令牌|access_token|bearer)(?:\s*[:：=是为]\s*|\s+)'
-        r'([^\s,，。；;、\n\r]+)',
-        'token',
-        'token',
-    ),
-    # API Key 模式
-    (
-        r'(?:api[_\-\s]?key|apikey|秘钥)(?:\s*[:：=是为]\s*|\s+)'
-        r'([^\s,，。；;、\n\r]+)',
-        'api_key',
-        'api_key',
-    ),
+# 默认的内置敏感字段匹配规则
+DEFAULT_PATTERNS = [
+    {
+        "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "secret_type": "password",
+        "label": "密码",
+    },
+    {
+        "pattern": r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "secret_type": "password",
+        "label": "password",
+    },
+    {
+        "pattern": r'(?:token|令牌|access_token|bearer)(?:\s*[:：=是为]\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "secret_type": "token",
+        "label": "token",
+    },
+    {
+        "pattern": r'(?:api[_\-\s]?key|apikey|秘钥)(?:\s*[:：=是为]\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "secret_type": "api_key",
+        "label": "api_key",
+    },
 ]
 
 # 连接串密码检测（单独处理，不走通用模式）
-# 匹配 postgresql://user:PASSWORD@host, mysql://user:PASSWORD@host, redis://:PASSWORD@host 等
 _CONNSTR_PATTERN = re.compile(
     r'((?:postgresql|postgres|mysql|redis|mongodb|amqp|mqtt)://'
     r'[^:@\s]*:)'           # scheme://user:
@@ -83,10 +75,55 @@ _CONNSTR_PATTERN = re.compile(
     r'(@[^\s,，。；;、]+)',   # @host/db...
 )
 
-_COMPILED_PATTERNS = [
-    (re.compile(pattern, re.IGNORECASE), secret_type, label)
-    for pattern, secret_type, label in _PATTERNS
-]
+# 动态编译的正则全局内存缓存
+_cached_patterns: list[tuple[re.Pattern, str, str]] = []
+_initialized = False
+
+
+def _compile_default_patterns() -> list[tuple[re.Pattern, str, str]]:
+    compiled = []
+    for item in DEFAULT_PATTERNS:
+        try:
+            compiled.append((re.compile(item["pattern"], re.IGNORECASE), item["secret_type"], item["label"]))
+        except Exception as e:
+            logger.error("编译默认正则失败: %s, error=%s", item["pattern"], str(e))
+    return compiled
+
+
+async def get_compiled_patterns() -> list[tuple[re.Pattern, str, str]]:
+    """获取编译好的正则列表，优先从 PostgreSQL 数据库加载。"""
+    global _cached_patterns, _initialized
+    if _initialized:
+        return _cached_patterns
+
+    try:
+        from backend.db import load_config
+        # 尝试从数据库加载
+        data_str = await load_config("sanitizer_patterns")
+        if data_str:
+            import json
+            patterns = json.loads(data_str)
+            compiled = []
+            for item in patterns:
+                compiled.append((re.compile(item["pattern"], re.IGNORECASE), item["secret_type"], item["label"]))
+            _cached_patterns = compiled
+            _initialized = True
+            return _cached_patterns
+    except Exception as e:
+        logger.warning("无法从数据库加载正则规则，将使用内置默认规则: %s", str(e))
+
+    # 降级使用默认规则
+    return _compile_default_patterns()
+
+
+async def update_patterns_cache(patterns: list[dict]) -> None:
+    """当 API 更新正则时，手动更新缓存。"""
+    global _cached_patterns, _initialized
+    compiled = []
+    for item in patterns:
+        compiled.append((re.compile(item["pattern"], re.IGNORECASE), item["secret_type"], item["label"]))
+    _cached_patterns = compiled
+    _initialized = True
 
 
 def _generate_secret_ref() -> str:
@@ -94,14 +131,26 @@ def _generate_secret_ref() -> str:
     return f"sec_live_{secrets_mod.token_urlsafe(24)}"
 
 
-def _detect_secrets(message: str) -> list[SensitiveMatch]:
+async def detect_secrets(message: str) -> list[SensitiveMatch]:
     """从消息中检测敏感信息，返回按位置从后向前排序的列表。"""
     matches: list[SensitiveMatch] = []
     seen_values: set[str] = set()
 
-    for compiled, secret_type, label_prefix in _COMPILED_PATTERNS:
+    compiled_patterns = await get_compiled_patterns()
+
+    for compiled, secret_type, label_prefix in compiled_patterns:
         for m in compiled.finditer(message):
-            value = m.group(1).strip()
+            try:
+                # 尝试抓取捕获组 1 (敏感值值体)
+                value = m.group(1).strip()
+                val_start = m.start(1)
+                val_end = m.end(1)
+            except IndexError:
+                # 若无捕获组，则抓取整段匹配
+                value = m.group(0).strip()
+                val_start = m.start(0)
+                val_end = m.end(0)
+
             if len(value) < 3:
                 continue
             skip_words = ('是什么', '是多少', '是啥', '多少', '什么', '忘了', '忘记了', 'what', 'is', 'the', 'my')
@@ -118,8 +167,8 @@ def _detect_secrets(message: str) -> list[SensitiveMatch]:
                 start=m.start(),
                 end=m.end(),
                 full_match=m.group(0),
-                value_start=m.start(1),
-                value_end=m.end(1),
+                value_start=val_start,
+                value_end=val_end,
             ))
 
     # 连接串密码检测（postgresql://user:PASSWORD@host）
@@ -166,7 +215,7 @@ async def sanitize_message(
     if "{{secret:" in message:
         return message, []
 
-    matches = _detect_secrets(message)
+    matches = await detect_secrets(message)
     if not matches:
         return message, []
 

@@ -1,4 +1,4 @@
-export type ViewState = 'dashboard' | 'chat' | 'trace' | 'config';
+export type ViewState = 'dashboard' | 'chat' | 'rules' | 'config';
 
 export interface AppState {
   activeView: ViewState;

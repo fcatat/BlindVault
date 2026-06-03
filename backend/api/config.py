@@ -8,8 +8,10 @@ BlindVault 配置 API
 from __future__ import annotations
 
 import logging
+import re
+import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from backend.config import get_settings
@@ -93,3 +95,61 @@ async def update_config(payload: LLMConfigUpdate):
         llm_base_url=settings.llm_base_url,
         has_api_key=bool(settings.llm_api_key),
     )
+
+
+class PatternItem(BaseModel):
+    """脱敏正则规则项模型。"""
+    pattern: str
+    secret_type: str
+    label: str
+
+
+@router.get("/patterns", response_model=list[PatternItem])
+async def get_patterns():
+    """获取所有脱敏正则规则。"""
+    from backend.db import load_config
+    from backend.sanitizer import DEFAULT_PATTERNS
+    try:
+        data_str = await load_config("sanitizer_patterns")
+        if data_str:
+            return json.loads(data_str)
+    except Exception as e:
+        logger.warning("从数据库加载正则失败，返回默认规则: %s", str(e))
+    return DEFAULT_PATTERNS
+
+
+@router.put("/patterns", response_model=list[PatternItem])
+async def update_patterns(patterns: list[PatternItem]):
+    """更新并应用脱敏正则规则，校验正则表达式合法性。"""
+    from backend.db import save_config
+    from backend.sanitizer import update_patterns_cache
+
+    # 校验正则的语法合法性
+    patterns_data = []
+    for item in patterns:
+        try:
+            re.compile(item.pattern)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"正则表达式语法不合法: {item.pattern}, 错误: {str(e)}",
+            )
+        patterns_data.append({
+            "pattern": item.pattern,
+            "secret_type": item.secret_type,
+            "label": item.label,
+        })
+
+    try:
+        # 持久化到 PostgreSQL
+        await save_config("sanitizer_patterns", json.dumps(patterns_data, ensure_ascii=False))
+        # 刷新内存缓存
+        await update_patterns_cache(patterns_data)
+    except Exception as e:
+        logger.exception("保存正则规则失败")
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存正则规则失败: {str(e)}",
+        )
+
+    return patterns
