@@ -22,6 +22,8 @@ export function RulesConfig() {
   const [testText, setTestText] = useState('');
   const [testResult, setTestResult] = useState('');
   const [testMatchedCount, setTestMatchedCount] = useState(0);
+  const [matchedIndices, setMatchedIndices] = useState<Set<number>>(new Set());
+  const [matchedLabels, setMatchedLabels] = useState<string[]>([]);
 
   // AI 弹窗状态
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
@@ -141,16 +143,20 @@ export function RulesConfig() {
     }
   };
 
-  // 5. 实时测试功能 (主面板)
+  // 5. 实时测试与联动高亮功能 (主面板)
   useEffect(() => {
     if (!testText.trim()) {
       setTestResult('');
       setTestMatchedCount(0);
+      setMatchedIndices(new Set());
+      setMatchedLabels([]);
       return;
     }
 
     let result = testText;
     let matchedCount = 0;
+    const newMatchedIndices = new Set<number>();
+    const newMatchedLabels: string[] = [];
 
     interface TempMatch {
       start: number;
@@ -159,11 +165,12 @@ export function RulesConfig() {
       valueEnd: number;
       value: string;
       label: string;
+      ruleIndex: number;
     }
 
     const matches: TempMatch[] = [];
 
-    patterns.forEach((p) => {
+    patterns.forEach((p, idx) => {
       if (!p.pattern.trim()) return;
       try {
         const regex = new RegExp(p.pattern, 'gi');
@@ -195,8 +202,13 @@ export function RulesConfig() {
                 valueStart: valStart,
                 valueEnd: valEnd,
                 value: val,
-                label: p.label
+                label: p.label,
+                ruleIndex: idx
               });
+              newMatchedIndices.add(idx);
+              if (!newMatchedLabels.includes(p.label)) {
+                newMatchedLabels.push(p.label);
+              }
             }
           }
         }
@@ -215,6 +227,8 @@ export function RulesConfig() {
 
     setTestResult(result);
     setTestMatchedCount(matchedCount);
+    setMatchedIndices(newMatchedIndices);
+    setMatchedLabels(newMatchedLabels);
   }, [testText, patterns]);
 
   // AI 预览样本高亮渲染
@@ -279,6 +293,8 @@ export function RulesConfig() {
       return false;
     }
   };
+
+  const isTesting = testText.trim().length > 0;
 
   return (
     <div className="flex-1 p-6 lg:p-10 max-w-5xl mx-auto w-full animate-in slide-in-from-right-4 duration-500 overflow-y-auto pb-24">
@@ -351,49 +367,69 @@ export function RulesConfig() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline-variant/20">
-                    {patterns.map((item, index) => (
-                      <tr key={index} className="hover:bg-surface-container-lowest/40 transition-colors">
-                        <td className="py-3 px-4">
-                          <input
-                            type="text"
-                            value={item.pattern}
-                            onChange={(e) => handleFieldChange(index, 'pattern', e.target.value)}
-                            placeholder="e.g. (?::password|pwd)=([A-Za-z0-9]+)"
-                            className="w-full bg-surface-container-low border border-outline-variant/50 focus:border-primary rounded px-3 py-1.5 font-mono text-xs text-on-surface outline-none transition-colors"
-                          />
-                        </td>
-                        <td className="py-3 px-3">
-                          <select
-                            value={item.secret_type}
-                            onChange={(e) => handleFieldChange(index, 'secret_type', e.target.value)}
-                            className="bg-surface-container-low border border-outline-variant/50 focus:border-primary rounded px-2 py-1.5 text-xs text-on-surface outline-none transition-colors w-full cursor-pointer"
-                          >
-                            <option value="password">{t('modal.typePassword')}</option>
-                            <option value="api_key">{t('modal.typeApiKey')}</option>
-                            <option value="token">{t('modal.typeToken')}</option>
-                            <option value="other">{t('modal.typeOther')}</option>
-                          </select>
-                        </td>
-                        <td className="py-3 px-3">
-                          <input
-                            type="text"
-                            value={item.label}
-                            onChange={(e) => handleFieldChange(index, 'label', e.target.value)}
-                            placeholder="my_password"
-                            className="w-full bg-surface-container-low border border-outline-variant/50 focus:border-primary rounded px-3 py-1.5 text-xs text-on-surface outline-none transition-colors font-medium"
-                          />
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <button
-                            onClick={() => handleRemoveRule(index)}
-                            className="p-2 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors cursor-pointer"
-                            title="Remove Rule"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {patterns.map((item, index) => {
+                      const isMatched = matchedIndices.has(index);
+                      return (
+                        <tr 
+                          key={index} 
+                          className={`transition-all duration-300 ${
+                            isTesting
+                              ? isMatched
+                                ? 'bg-green-50/50 hover:bg-green-50/80 border-l-4 border-l-green-500 shadow-sm'
+                                : 'opacity-40 hover:opacity-75'
+                              : 'hover:bg-surface-container-lowest/40'
+                          }`}
+                        >
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2 w-full">
+                              {isTesting && isMatched && (
+                                <span className="relative flex h-2 w-2 shrink-0">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                                </span>
+                              )}
+                              <input
+                                type="text"
+                                value={item.pattern}
+                                onChange={(e) => handleFieldChange(index, 'pattern', e.target.value)}
+                                placeholder="e.g. (?::password|pwd)=([A-Za-z0-9]+)"
+                                className="w-full bg-surface-container-low border border-outline-variant/50 focus:border-primary rounded px-3 py-1.5 font-mono text-xs text-on-surface outline-none transition-colors"
+                              />
+                            </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            <select
+                              value={item.secret_type}
+                              onChange={(e) => handleFieldChange(index, 'secret_type', e.target.value)}
+                              className="bg-surface-container-low border border-outline-variant/50 focus:border-primary rounded px-2 py-1.5 text-xs text-on-surface outline-none transition-colors w-full cursor-pointer"
+                            >
+                              <option value="password">{t('modal.typePassword')}</option>
+                              <option value="api_key">{t('modal.typeApiKey')}</option>
+                              <option value="token">{t('modal.typeToken')}</option>
+                              <option value="other">{t('modal.typeOther')}</option>
+                            </select>
+                          </td>
+                          <td className="py-3 px-3">
+                            <input
+                              type="text"
+                              value={item.label}
+                              onChange={(e) => handleFieldChange(index, 'label', e.target.value)}
+                              placeholder="my_password"
+                              className="w-full bg-surface-container-low border border-outline-variant/50 focus:border-primary rounded px-3 py-1.5 text-xs text-on-surface outline-none transition-colors font-medium font-mono"
+                            />
+                          </td>
+                          <td className="py-3 px-4 text-center">
+                            <button
+                              onClick={() => handleRemoveRule(index)}
+                              className="p-2 rounded hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors cursor-pointer"
+                              title="Remove Rule"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {patterns.length === 0 && (
                       <tr>
                         <td colSpan={4} className="py-12 text-center text-on-surface-variant/70 italic bg-surface-container-lowest">
@@ -433,8 +469,8 @@ export function RulesConfig() {
                 className="w-full text-xs font-mono bg-surface-container border border-outline-variant focus:border-primary rounded-xl p-3 outline-none resize-none text-on-surface placeholder:text-on-surface-variant/40 leading-normal"
               ></textarea>
 
-              {testText.trim() && (
-                <div className="mt-5 space-y-3 animate-in fade-in duration-300">
+              {isTesting && (
+                <div className="mt-5 space-y-3.5 animate-in fade-in duration-300">
                   <div className="flex items-center justify-between text-xs text-on-surface-variant">
                     <span>{t('rules.testResult')}</span>
                     <span className="px-2 py-0.5 rounded bg-primary-fixed/20 border border-primary-fixed-dim text-primary font-semibold font-mono text-[10px]">
@@ -442,9 +478,29 @@ export function RulesConfig() {
                     </span>
                   </div>
                   
-                  <div className="bg-surface-dim border border-outline-variant/60 rounded-xl p-4 font-mono text-[11px] text-on-surface-variant break-all whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed">
+                  <div className="bg-surface-dim border border-outline-variant/60 rounded-xl p-4 font-mono text-[11px] text-on-surface-variant break-all whitespace-pre-wrap max-h-40 overflow-y-auto leading-relaxed shadow-inner">
                     {testResult}
                   </div>
+
+                  {/* 方案 C: 已匹配的规则列表展示 */}
+                  {matchedLabels.length > 0 && (
+                    <div className="pt-3 border-t border-outline-variant/20 space-y-2 animate-in fade-in duration-200">
+                      <span className="text-[10px] text-on-surface-variant font-bold block uppercase tracking-wider">
+                        Matched Rules:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {matchedLabels.map((lbl, idx) => (
+                          <span 
+                            key={idx} 
+                            className="px-2 py-0.5 rounded bg-green-100 border border-green-200 text-green-800 text-[10px] font-semibold font-mono shadow-sm flex items-center gap-1.5 animate-in zoom-in-95"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            {lbl}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -572,7 +628,7 @@ export function RulesConfig() {
                         type="text"
                         value={aiResult.label}
                         onChange={(e) => setAiResult({ ...aiResult, label: e.target.value })}
-                        className="w-full bg-surface-container border border-outline-variant/80 focus:border-primary rounded px-3 py-1.5 font-mono text-xs text-on-surface outline-none font-semibold"
+                        className="w-full bg-surface-container border border-outline-variant/80 focus:border-primary rounded px-3 py-1.5 font-mono text-xs text-on-surface outline-none font-semibold font-mono"
                       />
                     </div>
                   </div>
