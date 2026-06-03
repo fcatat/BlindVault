@@ -153,3 +153,119 @@ async def update_patterns(patterns: list[PatternItem]):
         )
 
     return patterns
+
+
+class RegexGenerateRequest(BaseModel):
+    """AI 生成正则请求。"""
+    user_description: str
+    sample_text: str = ""
+
+
+class RegexGenerateResponse(BaseModel):
+    """AI 生成正则响应。"""
+    pattern: str
+    secret_type: str
+    label: str
+
+
+@router.post("/patterns/generate", response_model=RegexGenerateResponse)
+async def generate_regex(payload: RegexGenerateRequest):
+    """
+    使用 AI 根据用户的自然语言描述和样例内容，生成脱敏正则表达式并提取字段。
+    """
+    settings = get_settings()
+    if settings.llm_provider == "mock" or not settings.llm_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="请先在 [Agent 配置] 页面配置好 LLM API Key 并切换为 OpenAI 模式，以使用 AI 生成正则功能。",
+        )
+
+    # 引入 LangChain 客户端调用
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+    except ImportError as e:
+        logger.error("无法加载 langchain 依赖: %s", str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"系统缺失大模型调用组件，请联系管理员或使用手动配置。错误: {str(e)}",
+        )
+
+    llm_kwargs = {
+        "model": settings.llm_model,
+        "api_key": settings.llm_api_key,
+        "temperature": 0.1,
+    }
+    if settings.llm_base_url:
+        llm_kwargs["base_url"] = settings.llm_base_url
+
+    try:
+        llm = ChatOpenAI(**llm_kwargs)
+        
+        system_prompt = """你是一个正则表达式专家和运维安全防护专家。
+用户的目标是编写一个正则表达式，用于自动识别和脱敏命令行、日志或消息中的敏感凭据（如密码、Token、密钥等）。
+
+请根据用户的【需求描述】和提供的【测试样本】，设计一个用于脱敏的正则表达式。
+正则表达式必须遵守以下规则：
+1. 建议在敏感值（例如具体的密码值、Token值）的外层使用捕获组 `(...)`，这样系统可以精准扣出密钥体并保留前导的键名（如 `token=xxx` 只替换 `xxx`）。
+2. 你需要指定这笔敏感信息的凭证类型 (`secret_type`)，它必须是以下四者之一：'password'、'api_key'、'token'、'other'。
+3. 指定一个英文缩写的短标签 (`label`)，例如 `custom_pwd`、`auth_token`、`api_secret`。
+4. 保证正则表达式是标准可用的，兼容 Python re 模块。
+
+请直接返回一个 JSON 对象，不要使用 markdown 的 ``` 格式包裹，格式如下：
+{
+  "pattern": "这里是正则表达式",
+  "secret_type": "password/api_key/token/other 之一",
+  "label": "短标签"
+}
+"""
+        user_prompt = f"【需求描述】：{payload.user_description}\n"
+        if payload.sample_text:
+            user_prompt += f"【测试样本】：{payload.sample_text}\n"
+
+        response = await llm.ainvoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt)
+        ])
+
+        content = response.content.strip()
+        
+        # 清除可能带有的 markdown code block 包裹
+        if content.startswith("```"):
+            lines = content.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines[-1].startswith("```"):
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+
+        data = json.loads(content)
+        pattern = data.get("pattern", "")
+        secret_type = data.get("secret_type", "other")
+        label = data.get("label", "custom_rule")
+
+        if not pattern:
+            raise ValueError("LLM 未返回有效 pattern 正则表达式")
+
+        # 语法合规校验
+        re.compile(pattern)
+
+        return RegexGenerateResponse(
+            pattern=pattern,
+            secret_type=secret_type,
+            label=label,
+        )
+
+    except json.JSONDecodeError as jde:
+        logger.exception("AI 返回了无法解析的 JSON 数据")
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI 返回的数据解析失败，请精简重试。返回内容: {response.content if 'response' in locals() else str(jde)}",
+        )
+    except Exception as e:
+        logger.exception("AI 生成正则失败")
+        raise HTTPException(
+            status_code=500,
+            detail=f"AI 辅助生成正则失败: {str(e)}",
+        )
+

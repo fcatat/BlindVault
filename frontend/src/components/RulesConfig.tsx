@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { EyeOff, Plus, Trash2, Save, Play, RefreshCw, HelpCircle, CheckCircle } from 'lucide-react';
+import { 
+  EyeOff, Plus, Trash2, Save, Play, RefreshCw, 
+  HelpCircle, CheckCircle, Sparkles, X, AlertCircle, Check
+} from 'lucide-react';
 import { useI18n } from '../i18n';
 
 interface PatternItem {
@@ -15,10 +18,18 @@ export function RulesConfig() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'failed'>('idle');
   
-  // 测试工具状态
+  // 匹配测试工具状态
   const [testText, setTestText] = useState('');
   const [testResult, setTestResult] = useState('');
   const [testMatchedCount, setTestMatchedCount] = useState(0);
+
+  // AI 弹窗状态
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [aiDescription, setAiDescription] = useState('');
+  const [aiSample, setAiSample] = useState('');
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [aiResult, setAiResult] = useState<PatternItem | null>(null);
 
   // 1. 获取正则规则
   const fetchPatterns = async () => {
@@ -88,7 +99,49 @@ export function RulesConfig() {
     }
   };
 
-  // 4. 实时测试功能
+  // 4. 调用 AI 辅助生成接口
+  const handleAiGenerate = async () => {
+    if (!aiDescription.trim()) return;
+    setIsAiGenerating(true);
+    setAiError('');
+    setAiResult(null);
+    try {
+      const response = await fetch('/api/config/patterns/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_description: aiDescription,
+          sample_text: aiSample
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setAiResult(data);
+      } else {
+        const err = await response.json();
+        setAiError(err.detail || 'AI generation failed.');
+      }
+    } catch (error: any) {
+      setAiError(error.message || 'AI generation request failed.');
+    } finally {
+      setIsAiGenerating(false);
+    }
+  };
+
+  // 采纳 AI 生成的规则
+  const handleAdoptRule = () => {
+    if (aiResult) {
+      setPatterns([...patterns, { ...aiResult }]);
+      setIsAiModalOpen(false);
+      // 清空弹窗临时状态
+      setAiDescription('');
+      setAiSample('');
+      setAiResult(null);
+      setAiError('');
+    }
+  };
+
+  // 5. 实时测试功能 (主面板)
   useEffect(() => {
     if (!testText.trim()) {
       setTestResult('');
@@ -99,7 +152,6 @@ export function RulesConfig() {
     let result = testText;
     let matchedCount = 0;
 
-    // 按字符位置逆序替换，以防替换后索引发生错乱
     interface TempMatch {
       start: number;
       end: number;
@@ -111,14 +163,12 @@ export function RulesConfig() {
 
     const matches: TempMatch[] = [];
 
-    // 执行前端正则解析
     patterns.forEach((p) => {
       if (!p.pattern.trim()) return;
       try {
         const regex = new RegExp(p.pattern, 'gi');
         let match;
         while ((match = regex.exec(testText)) !== null) {
-          // 如果有捕获组使用组1，否则使用组0
           const fullMatch = match[0];
           let val = fullMatch;
           let valStart = match.index;
@@ -126,7 +176,6 @@ export function RulesConfig() {
 
           if (match.length > 1 && match[1] !== undefined) {
             val = match[1];
-            // 计算捕获组在原字符串里的偏移量
             const groupOffset = fullMatch.indexOf(val);
             if (groupOffset !== -1) {
               valStart = match.index + groupOffset;
@@ -135,7 +184,6 @@ export function RulesConfig() {
           }
 
           if (val.trim().length >= 3) {
-            // 防重复匹配相同区间
             const isOverlap = matches.some(m => 
               (valStart >= m.valueStart && valStart < m.valueEnd) ||
               (valEnd > m.valueStart && valEnd <= m.valueEnd)
@@ -153,11 +201,10 @@ export function RulesConfig() {
           }
         }
       } catch (e) {
-        // 忽略测试中编译错误的无效正则
+        // 忽略测试中无效正则
       }
     });
 
-    // 排序：从后往前
     matches.sort((a, b) => b.valueStart - a.valueStart);
 
     matches.forEach(m => {
@@ -169,6 +216,69 @@ export function RulesConfig() {
     setTestResult(result);
     setTestMatchedCount(matchedCount);
   }, [testText, patterns]);
+
+  // AI 预览样本高亮渲染
+  const renderAiSampleHighlight = () => {
+    if (!aiSample || !aiResult || !aiResult.pattern) return aiSample;
+    try {
+      const regex = new RegExp(aiResult.pattern, 'gi');
+      const matches: { start: number; end: number }[] = [];
+      let match;
+      while ((match = regex.exec(aiSample)) !== null) {
+        const fullMatch = match[0];
+        let valStart = match.index;
+        let valEnd = match.index + fullMatch.length;
+
+        if (match.length > 1 && match[1] !== undefined) {
+          const groupOffset = fullMatch.indexOf(match[1]);
+          if (groupOffset !== -1) {
+            valStart = match.index + groupOffset;
+            valEnd = valStart + match[1].length;
+          }
+        }
+        matches.push({ start: valStart, end: valEnd });
+      }
+
+      if (matches.length === 0) return null;
+
+      matches.sort((a, b) => b.start - a.start);
+      const parts: React.ReactNode[] = [];
+      let lastIndex = aiSample.length;
+
+      matches.forEach((m, idx) => {
+        if (lastIndex > m.end) {
+          parts.push(aiSample.substring(m.end, lastIndex));
+        }
+        parts.push(
+          <span 
+            key={idx} 
+            className="bg-amber-400/35 text-amber-900 border border-amber-400/50 rounded px-1 py-0.5 font-bold font-mono inline-block shrink-0"
+          >
+            {aiSample.substring(m.start, m.end)}
+          </span>
+        );
+        lastIndex = m.start;
+      });
+
+      if (lastIndex > 0) {
+        parts.push(aiSample.substring(0, lastIndex));
+      }
+
+      return parts.reverse();
+    } catch {
+      return aiSample;
+    }
+  };
+
+  const hasAiMatch = () => {
+    if (!aiSample || !aiResult || !aiResult.pattern) return false;
+    try {
+      const regex = new RegExp(aiResult.pattern, 'gi');
+      return regex.test(aiSample);
+    } catch {
+      return false;
+    }
+  };
 
   return (
     <div className="flex-1 p-6 lg:p-10 max-w-5xl mx-auto w-full animate-in slide-in-from-right-4 duration-500 overflow-y-auto pb-24">
@@ -184,6 +294,14 @@ export function RulesConfig() {
           </p>
         </div>
         <div className="flex items-center gap-3 shrink-0">
+          <button 
+            onClick={() => setIsAiModalOpen(true)}
+            className="btn-secondary rounded-lg py-2 px-3.5 flex items-center gap-2 text-sm font-semibold cursor-pointer shadow-sm hover:scale-105 active:scale-95 transition-all bg-gradient-to-r from-violet-600/10 to-indigo-600/10 border border-indigo-500/20 text-indigo-700"
+          >
+            <Sparkles className="w-4 h-4 text-indigo-600" />
+            {t('rules.aiBtn')}
+          </button>
+
           <button 
             onClick={handleAddRule}
             className="btn-primary-tonal rounded-lg py-2 px-4 flex items-center gap-2 text-sm font-semibold cursor-pointer"
@@ -332,6 +450,175 @@ export function RulesConfig() {
             </div>
           </div>
 
+        </div>
+      )}
+
+      {/* AI Regex Generator Modal */}
+      {isAiModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-inverse-surface/40 backdrop-blur-sm animate-in fade-in duration-300">
+          <div className="glass-panel w-full max-w-2xl bg-surface border border-outline-variant/80 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-300">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-outline-variant/40 flex items-center justify-between bg-surface-container-low">
+              <h3 className="font-headline text-lg font-semibold text-on-surface flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-indigo-600 animate-pulse" />
+                {t('rules.aiModalTitle')}
+              </h3>
+              <button 
+                onClick={() => {
+                  setIsAiModalOpen(false);
+                  setAiError('');
+                  setAiResult(null);
+                }} 
+                className="p-1.5 rounded-lg hover:bg-surface-container-highest text-on-surface-variant/70 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-5 flex-1 font-body text-sm leading-relaxed">
+              <p className="text-xs text-on-surface-variant">
+                {t('rules.aiModalDesc')}
+              </p>
+
+              {/* Description Input */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-on-surface uppercase tracking-wider block">
+                  {t('rules.aiDescLabel')}
+                </label>
+                <input
+                  type="text"
+                  value={aiDescription}
+                  onChange={(e) => setAiDescription(e.target.value)}
+                  placeholder={t('rules.aiDescPlaceholder')}
+                  className="w-full bg-surface-container-low border border-outline-variant focus:border-primary rounded-xl px-4 py-2.5 outline-none transition-colors"
+                />
+              </div>
+
+              {/* Sample Input */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-on-surface uppercase tracking-wider block">
+                  {t('rules.aiSampleLabel')}
+                </label>
+                <textarea
+                  value={aiSample}
+                  onChange={(e) => setAiSample(e.target.value)}
+                  placeholder={t('rules.aiSamplePlaceholder')}
+                  rows={2}
+                  className="w-full bg-surface-container-low border border-outline-variant focus:border-primary rounded-xl p-3 outline-none resize-none font-mono text-xs leading-normal"
+                ></textarea>
+              </div>
+
+              {/* Gen button and error messages */}
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  onClick={handleAiGenerate}
+                  disabled={isAiGenerating || !aiDescription.trim()}
+                  className="btn-primary rounded-lg py-2.5 px-5 flex items-center gap-2 text-sm font-semibold cursor-pointer disabled:opacity-50 bg-gradient-to-r from-violet-600 to-indigo-600 text-white"
+                >
+                  {isAiGenerating ? (
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  {isAiGenerating ? t('rules.aiGenerating') : t('rules.aiGenBtn')}
+                </button>
+              </div>
+
+              {aiError && (
+                <div className="flex gap-2.5 bg-red-50 border border-red-200 text-red-800 text-xs rounded-xl p-3.5 font-mono leading-relaxed">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                  <span>{aiError}</span>
+                </div>
+              )}
+
+              {/* Results visualization */}
+              {aiResult && (
+                <div className="border border-outline-variant/60 rounded-xl p-5 bg-surface-container-low space-y-4 animate-in fade-in duration-300">
+                  <h4 className="font-headline font-bold text-on-surface border-b border-outline-variant/20 pb-2 text-xs uppercase tracking-wider">
+                    {t('rules.aiResultTitle')}
+                  </h4>
+                  
+                  {/* Fields editing inside Modal */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="sm:col-span-2 space-y-1">
+                      <span className="text-[10px] text-on-surface-variant font-bold block uppercase">{t('rules.regex')}</span>
+                      <input
+                        type="text"
+                        value={aiResult.pattern}
+                        onChange={(e) => setAiResult({ ...aiResult, pattern: e.target.value })}
+                        className="w-full bg-surface-container border border-outline-variant/80 focus:border-primary rounded px-3 py-1.5 font-mono text-xs text-on-surface outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-on-surface-variant font-bold block uppercase">{t('rules.type')}</span>
+                      <select
+                        value={aiResult.secret_type}
+                        onChange={(e) => setAiResult({ ...aiResult, secret_type: e.target.value })}
+                        className="w-full bg-surface-container border border-outline-variant/80 focus:border-primary rounded px-2 py-1.5 text-xs text-on-surface outline-none cursor-pointer"
+                      >
+                        <option value="password">{t('modal.typePassword')}</option>
+                        <option value="api_key">{t('modal.typeApiKey')}</option>
+                        <option value="token">{t('modal.typeToken')}</option>
+                        <option value="other">{t('modal.typeOther')}</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <span className="text-[10px] text-on-surface-variant font-bold block uppercase">{t('rules.label')}</span>
+                      <input
+                        type="text"
+                        value={aiResult.label}
+                        onChange={(e) => setAiResult({ ...aiResult, label: e.target.value })}
+                        className="w-full bg-surface-container border border-outline-variant/80 focus:border-primary rounded px-3 py-1.5 font-mono text-xs text-on-surface outline-none font-semibold"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Verification rendering inside Modal */}
+                  {aiSample && (
+                    <div className="border-t border-outline-variant/20 pt-4 space-y-2">
+                      <h4 className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex justify-between items-center">
+                        <span>{t('rules.aiVerifyTitle')}</span>
+                        {hasAiMatch() ? (
+                          <span className="text-green-700 flex items-center gap-1 font-semibold text-[9px] bg-green-100 border border-green-200 px-1.5 py-0.5 rounded uppercase">
+                            <Check className="w-3 h-3" /> {t('rules.aiVerifySuccess')}
+                          </span>
+                        ) : (
+                          <span className="text-red-700 flex items-center gap-1 font-semibold text-[9px] bg-red-100 border border-red-200 px-1.5 py-0.5 rounded uppercase">
+                            <AlertCircle className="w-3 h-3" /> No Matches
+                          </span>
+                        )}
+                      </h4>
+                      
+                      <div className="bg-surface border border-outline-variant/50 rounded-lg p-3 font-mono text-xs text-on-surface break-all min-h-12 flex items-center flex-wrap gap-1 leading-relaxed shadow-inner">
+                        {hasAiMatch() ? (
+                          renderAiSampleHighlight()
+                        ) : (
+                          <span className="text-on-surface-variant italic opacity-60 text-[11px] block py-1.5 w-full">
+                            {t('rules.aiVerifyNoMatch')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Adopt button */}
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={handleAdoptRule}
+                      className="btn-primary rounded-lg py-2 px-4 flex items-center gap-2 text-xs font-bold cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white shadow"
+                    >
+                      <Check className="w-4 h-4" />
+                      {t('rules.aiAdoptBtn')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
