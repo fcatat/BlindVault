@@ -102,7 +102,7 @@ async def create_secret(
 @router.get("", response_model=list[SecretMetadataResponse])
 async def list_secrets(
     x_user_id: str = Header(..., alias="X-User-Id"),
-    x_session_id: str = Header(..., alias="X-Session-Id"),
+    x_session_id: str = Header(None, alias="X-Session-Id"),
 ):
     """
     列出当前用户和会话下的所有 secret 元数据。
@@ -110,7 +110,7 @@ async def list_secrets(
     不返回真实 value 或 ciphertext。
     """
     store = await get_store()
-    records = await store.list_secrets(x_user_id, x_session_id)
+    records = await store.list_secrets(x_user_id)
 
     return [
         SecretMetadataResponse(
@@ -131,7 +131,7 @@ async def list_secrets(
 async def revoke_secret(
     secret_ref: str,
     x_user_id: str = Header(..., alias="X-User-Id"),
-    x_session_id: str = Header(..., alias="X-Session-Id"),
+    x_session_id: str = Header(None, alias="X-Session-Id"),
 ):
     """
     撤销一个 secret（标记为 revoked）。
@@ -144,7 +144,7 @@ async def revoke_secret(
     record = await store.get_secret(secret_ref)
     if record is None:
         raise HTTPException(status_code=404, detail="Secret not found")
-    if record.user_id != x_user_id or record.session_id != x_session_id:
+    if record.user_id != x_user_id:
         # 不暴露 secret 存在但不属于当前用户的信息
         raise HTTPException(status_code=404, detail="Secret not found")
 

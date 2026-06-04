@@ -33,9 +33,9 @@ class SecretStore:
         """构造 Redis key。"""
         return f"{self._prefix}secret:{secret_ref}"
 
-    def _user_index_key(self, user_id: str, session_id: str) -> str:
-        """用户+会话维度的 secret 索引 key。"""
-        return f"{self._prefix}user_secrets:{user_id}:{session_id}"
+    def _user_index_key(self, user_id: str) -> str:
+        """用户维度的全局 secret 索引 key。"""
+        return f"{self._prefix}user_secrets:{user_id}"
 
     async def save_secret(self, record: SecretRecord) -> None:
         """
@@ -59,7 +59,7 @@ class SecretStore:
         expire_ts = int(record.expires_at.timestamp()) + 60
         pipe.expireat(key, expire_ts)
         # 用户索引
-        idx_key = self._user_index_key(record.user_id, record.session_id)
+        idx_key = self._user_index_key(record.user_id)
         pipe.sadd(idx_key, record.secret_ref)
         pipe.expireat(idx_key, expire_ts)
         await pipe.execute()
@@ -104,12 +104,12 @@ class SecretStore:
         await self._redis.hset(key, "status", status.value)
 
     async def list_secrets(
-        self, user_id: str, session_id: str
+        self, user_id: str
     ) -> list[SecretRecord]:
         """
-        列出指定用户和会话下的所有 secret 记录。
+        列出指定用户下的所有 secret 记录。
         """
-        idx_key = self._user_index_key(user_id, session_id)
+        idx_key = self._user_index_key(user_id)
         refs = await self._redis.smembers(idx_key)
         records = []
         for ref_bytes in refs:

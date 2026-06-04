@@ -120,14 +120,13 @@ async def resolve_secret(
         logger.warning("Secret 解析失败: user_id 不匹配")
         raise SecretResolutionError("user_mismatch")
 
-    # 4. 检查 session_id
+    # 4. 检查 session_id (仅记录来源，不作强制物理阻断)
     if record.session_id != ctx.session_id:
-        logger.warning(
-            "Secret 解析失败: session_id 不匹配! record.session_id=%s, ctx.session_id=%s",
+        logger.info(
+            "Secret 跨会话调用: 凭据创建会话为 %s, 当前调用上下文会话为 %s",
             record.session_id,
             ctx.session_id,
         )
-        raise SecretResolutionError("session_mismatch")
 
     # 5. 检查 tenant_id
     if record.tenant_id != ctx.tenant_id:

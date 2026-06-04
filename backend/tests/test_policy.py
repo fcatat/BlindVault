@@ -49,12 +49,13 @@ async def test_resolve_success(store, encryption_key):
 
 
 @pytest.mark.asyncio
-async def test_resolve_wrong_session(store, encryption_key):
-    """错误 session 不能 resolve。"""
+async def test_resolve_wrong_session_allowed(store, encryption_key):
+    """即使 session_id 不匹配也可以成功 resolve。"""
     await create_test_secret(
         store, encryption_key,
         secret_ref="sec_live_session_test",
         session_id="correct_session",
+        value="session_test_pwd",
     )
 
     ctx = ExecutionContext(
@@ -68,8 +69,8 @@ async def test_resolve_wrong_session(store, encryption_key):
         destination="https://example.com",
     )
 
-    with pytest.raises(SecretResolutionError):
-        await resolve_secret(store, ctx, req)
+    plaintext = await resolve_secret(store, ctx, req)
+    assert plaintext == "session_test_pwd"
 
 
 @pytest.mark.asyncio
