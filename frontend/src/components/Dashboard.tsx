@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { 
   RefreshCcw, KeyRound, Hourglass, Layers, TrendingUp, 
   Info, History, Database, Wrench, Server, Ban, Cloud,
-  Code, Mail, Trash2, ShieldCheck, AlertTriangle
+  Code, Mail, Trash2, ShieldCheck, AlertTriangle, Copy
 } from 'lucide-react';
 import { listSecrets, revokeSecret, type SecretMetadata } from '../api';
 import { useI18n } from '../i18n';
@@ -171,6 +171,7 @@ export function Dashboard({ sessionId }: { sessionId: string, key?: string }) {
                 status={statusLabel}
                 title={secret.label}
                 id={maskRef(secret.secret_ref)}
+                secretRef={secret.secret_ref}
                 icon={typeIcon}
                 iconBg={isConsumed ? "bg-surface-container-highest" : "bg-primary-fixed"}
                 iconBorder={isConsumed ? "border-outline-variant" : "border-primary-fixed-dim"}
@@ -248,10 +249,18 @@ function StatCard({ icon, title, value, trendIcon, trendText, trendColor, valueC
 }
 
 function CredentialCard({ 
-  status, title, id, icon, iconBg, iconBorder, badgeColor, dotColor, accentColor, 
+  status, title, id, secretRef, icon, iconBg, iconBorder, badgeColor, dotColor, accentColor, 
   tool, destination, toolIcon, destIcon, progressColor, ttl, ttlPercent, reads, readsPercent,
   ttlColor = "text-on-surface", isConsumed = false, actionBtn
 }: any) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(`{{secret:${secretRef}}}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className={`panel-elevated rounded-xl p-5 flex flex-col relative overflow-hidden group h-full bg-surface-container-lowest ${isConsumed ? 'opacity-75 bg-surface-container-low' : ''}`}>
       <div className={`absolute top-0 left-0 w-full h-1 ${accentColor}`}></div>
@@ -263,7 +272,22 @@ function CredentialCard({
           </div>
           <div>
             <h3 className={`font-headline font-semibold text-sm ${isConsumed ? 'text-on-surface-variant line-through decoration-outline/50' : 'text-on-surface'}`}>{title}</h3>
-            <div className={`text-xs font-mono mt-0.5 ${isConsumed ? 'text-outline' : 'text-on-surface-variant'}`}>{id}</div>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`text-xs font-mono ${isConsumed ? 'text-outline' : 'text-on-surface-variant'}`}>{id}</span>
+              {!isConsumed && (
+                <button
+                  onClick={handleCopy}
+                  className="text-on-surface-variant hover:text-primary transition-colors p-1 rounded hover:bg-surface-container-high active:scale-95 flex items-center justify-center shrink-0"
+                  title="复制安全引用"
+                >
+                  {copied ? (
+                    <span className="text-green-600 text-[10px] font-sans font-semibold">已复制</span>
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
+                </button>
+              )}
+            </div>
           </div>
         </div>
         <div className={`px-2 py-1 rounded border text-xs font-medium flex items-center gap-1.5 shrink-0 ${badgeColor}`}>

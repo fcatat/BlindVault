@@ -16,7 +16,7 @@ export function AddCredentialModal({ isOpen, onClose, sessionId, onCreated }: Ad
   const { t } = useI18n();
   const [isMasked, setIsMasked] = useState(true);
   const [ttl, setTtl] = useState(15);
-  const [maxReads, setMaxReads] = useState(1);
+  const [maxReads, setMaxReads] = useState(999);
   const [secretType, setSecretType] = useState('password');
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
