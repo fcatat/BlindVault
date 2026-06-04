@@ -9,6 +9,7 @@ BlindVault PostgreSQL 持久化层
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 import asyncpg
@@ -182,8 +183,8 @@ async def save_secret_archive(
     allowed_tools: str,
     allowed_destinations: str,
     max_reads: int,
-    created_at: str,
-    expires_at: str,
+    created_at: datetime,
+    expires_at: datetime,
     status: str = "active",
 ) -> None:
     """将凭证元数据归档到 PostgreSQL（不含密文）。"""

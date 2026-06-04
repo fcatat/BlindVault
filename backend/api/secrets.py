@@ -100,8 +100,8 @@ async def create_secret(
             allowed_tools=json.dumps(req.allowed_tools),
             allowed_destinations=json.dumps(req.allowed_destinations),
             max_reads=req.max_reads,
-            created_at=now.isoformat(),
-            expires_at=expires_at.isoformat(),
+            created_at=now,
+            expires_at=expires_at,
             status=SecretStatus.ACTIVE.value,
         )
     except Exception as e:
@@ -160,7 +160,10 @@ async def list_secrets(
                 continue  # Redis 中已有，跳过
             # 确定状态：如果 PG 中仍是 active 但已过期，标记为 expired
             status_val = arch["status"]
-            if status_val == "active" and arch["expires_at"] <= now:
+            arch_expires = arch["expires_at"]
+            if arch_expires.tzinfo is None:
+                arch_expires = arch_expires.replace(tzinfo=timezone.utc)
+            if status_val == "active" and arch_expires <= now:
                 status_val = "expired"
                 # 同步更新 PG 状态
                 try:
