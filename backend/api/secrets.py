@@ -11,6 +11,7 @@ BlindVault Secret Store API
 
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -19,6 +20,7 @@ from fastapi import APIRouter, Header, HTTPException
 
 from backend.config import get_settings
 from backend.crypto import encrypt
+from backend.db import save_secret_archive, list_secret_archives, update_secret_archive_status
 from backend.models import (
     CreateSecretRequest,
     SecretMetadataResponse,
@@ -86,6 +88,25 @@ async def create_secret(
 
     await store.save_secret(record)
 
+    # 同步归档到 PostgreSQL（仅元数据，不含密文）
+    try:
+        await save_secret_archive(
+            secret_ref=secret_ref,
+            user_id=x_user_id,
+            session_id=x_session_id,
+            tenant_id=x_tenant_id,
+            label=req.label,
+            secret_type=req.secret_type.value,
+            allowed_tools=json.dumps(req.allowed_tools),
+            allowed_destinations=json.dumps(req.allowed_destinations),
+            max_reads=req.max_reads,
+            created_at=now.isoformat(),
+            expires_at=expires_at.isoformat(),
+            status=SecretStatus.ACTIVE.value,
+        )
+    except Exception as e:
+        logger.warning("凭证归档写入 PG 失败（不影响核心流程）: %s", str(e))
+
     return SecretResponse(
         secret_ref=secret_ref,
         placeholder=f"{{{{secret:{secret_ref}}}}}",
@@ -112,19 +133,59 @@ async def list_secrets(
     store = await get_store()
     records = await store.list_secrets(x_user_id)
 
-    return [
-        SecretMetadataResponse(
-            secret_ref=r.secret_ref,
-            label=r.label,
-            secret_type=r.secret_type,
-            allowed_tools=r.allowed_tools,
-            allowed_destinations=r.allowed_destinations,
-            expires_at=r.expires_at,
-            reads_left=max(0, r.max_reads - r.read_count),
-            status=r.status,
+    # 构建 Redis 活跃凭证的响应列表
+    redis_refs = set()
+    result = []
+    for r in records:
+        redis_refs.add(r.secret_ref)
+        result.append(
+            SecretMetadataResponse(
+                secret_ref=r.secret_ref,
+                label=r.label,
+                secret_type=r.secret_type,
+                allowed_tools=r.allowed_tools,
+                allowed_destinations=r.allowed_destinations,
+                expires_at=r.expires_at,
+                reads_left=max(0, r.max_reads - r.read_count),
+                status=r.status,
+            )
         )
-        for r in records
-    ]
+
+    # 从 PG 归档表补充 Redis 中已不存在的历史凭证
+    try:
+        archives = await list_secret_archives(x_user_id)
+        now = datetime.now(timezone.utc)
+        for arch in archives:
+            if arch["secret_ref"] in redis_refs:
+                continue  # Redis 中已有，跳过
+            # 确定状态：如果 PG 中仍是 active 但已过期，标记为 expired
+            status_val = arch["status"]
+            if status_val == "active" and arch["expires_at"] <= now:
+                status_val = "expired"
+                # 同步更新 PG 状态
+                try:
+                    await update_secret_archive_status(arch["secret_ref"], "expired")
+                except Exception:
+                    pass
+            # 解析 JSON 字段
+            allowed_tools = json.loads(arch["allowed_tools"]) if isinstance(arch["allowed_tools"], str) else arch["allowed_tools"]
+            allowed_dests = json.loads(arch["allowed_destinations"]) if isinstance(arch["allowed_destinations"], str) else arch["allowed_destinations"]
+            result.append(
+                SecretMetadataResponse(
+                    secret_ref=arch["secret_ref"],
+                    label=arch["label"],
+                    secret_type=arch["secret_type"],
+                    allowed_tools=allowed_tools,
+                    allowed_destinations=allowed_dests,
+                    expires_at=arch["expires_at"],
+                    reads_left=0,  # 已不在 Redis，无法解密，剩余0
+                    status=status_val,
+                )
+            )
+    except Exception as e:
+        logger.warning("从 PG 加载归档凭证失败: %s", str(e))
+
+    return result
 
 
 @router.post("/{secret_ref}/revoke", status_code=200)
@@ -151,5 +212,11 @@ async def revoke_secret(
     success = await store.revoke_secret(secret_ref)
     if not success:
         raise HTTPException(status_code=404, detail="Secret not found")
+
+    # 同步更新 PG 归档状态
+    try:
+        await update_secret_archive_status(secret_ref, "revoked")
+    except Exception as e:
+        logger.warning("撤销同步 PG 归档失败: %s", str(e))
 
     return {"status": "revoked", "secret_ref": secret_ref}

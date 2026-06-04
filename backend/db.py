@@ -31,6 +31,24 @@ CREATE TABLE IF NOT EXISTS blindvault_config (
 );
 """
 
+CREATE_SECRET_ARCHIVE_TABLE = """
+CREATE TABLE IF NOT EXISTS secret_archive (
+    secret_ref          VARCHAR(128) PRIMARY KEY,
+    user_id             VARCHAR(128) NOT NULL,
+    session_id          VARCHAR(128) NOT NULL,
+    tenant_id           VARCHAR(128) NOT NULL DEFAULT 'default',
+    label               VARCHAR(256) NOT NULL,
+    secret_type         VARCHAR(64)  NOT NULL DEFAULT 'password',
+    allowed_tools       TEXT         NOT NULL DEFAULT '[]',
+    allowed_destinations TEXT        NOT NULL DEFAULT '[]',
+    max_reads           INTEGER      NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    expires_at          TIMESTAMPTZ  NOT NULL,
+    status              VARCHAR(32)  NOT NULL DEFAULT 'active'
+);
+CREATE INDEX IF NOT EXISTS idx_secret_archive_user ON secret_archive(user_id);
+"""
+
 
 async def init_db(database_url: str) -> None:
     """初始化数据库连接池并建表。"""
@@ -38,7 +56,8 @@ async def init_db(database_url: str) -> None:
     _pool = await asyncpg.create_pool(database_url, min_size=1, max_size=5)
     async with _pool.acquire() as conn:
         await conn.execute(CREATE_CONFIG_TABLE)
-    logger.info("PostgreSQL 连接成功，blindvault_config 表已就绪")
+        await conn.execute(CREATE_SECRET_ARCHIVE_TABLE)
+    logger.info("PostgreSQL 连接成功，blindvault_config / secret_archive 表已就绪")
 
 
 async def close_db() -> None:
@@ -146,3 +165,70 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, str]:
             logger.warning("无法解密持久化的 API Key，可能加密密钥已变更")
 
     return result
+
+
+# ============================================================
+# 凭证归档持久化
+# ============================================================
+
+
+async def save_secret_archive(
+    secret_ref: str,
+    user_id: str,
+    session_id: str,
+    tenant_id: str,
+    label: str,
+    secret_type: str,
+    allowed_tools: str,
+    allowed_destinations: str,
+    max_reads: int,
+    created_at: str,
+    expires_at: str,
+    status: str = "active",
+) -> None:
+    """将凭证元数据归档到 PostgreSQL（不含密文）。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO secret_archive
+                (secret_ref, user_id, session_id, tenant_id, label, secret_type,
+                 allowed_tools, allowed_destinations, max_reads, created_at, expires_at, status)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            ON CONFLICT (secret_ref) DO UPDATE SET status = $12
+            """,
+            secret_ref, user_id, session_id, tenant_id, label, secret_type,
+            allowed_tools, allowed_destinations, max_reads,
+            created_at, expires_at, status,
+        )
+
+
+async def update_secret_archive_status(secret_ref: str, status: str) -> None:
+    """更新归档凭证的状态（如 revoked）。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE secret_archive SET status = $1 WHERE secret_ref = $2",
+            status, secret_ref,
+        )
+
+
+async def list_secret_archives(user_id: str) -> list[dict]:
+    """
+    查询指定用户的所有归档凭证元数据。
+
+    返回字典列表，字段与 SecretMetadataResponse 对齐。
+    """
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT secret_ref, label, secret_type, allowed_tools, allowed_destinations,
+                   max_reads, created_at, expires_at, status
+            FROM secret_archive
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            """,
+            user_id,
+        )
+        return [dict(row) for row in rows]
