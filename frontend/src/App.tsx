@@ -144,6 +144,7 @@ export default function App() {
       <AddCredentialModal 
         isOpen={isModalOpen} 
         onClose={() => setIsModalOpen(false)} 
+        sessionId={activeSessionId}
         onCreated={handleSecretCreated}
       />
     </div>

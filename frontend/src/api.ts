@@ -93,10 +93,10 @@ export interface AgentRunResponse {
 
 // ---- API 函数 ----
 
-export async function createSecret(payload: CreateSecretPayload): Promise<SecretResponse> {
+export async function createSecret(sessionId: string, payload: CreateSecretPayload): Promise<SecretResponse> {
   const res = await fetch(`${API_BASE}/secrets`, {
     method: 'POST',
-    headers: DEFAULT_HEADERS,
+    headers: getHeaders(sessionId),
     body: JSON.stringify(payload),
   });
   if (!res.ok) {

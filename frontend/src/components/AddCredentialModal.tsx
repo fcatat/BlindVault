@@ -8,10 +8,11 @@ import { useI18n } from '../i18n';
 interface AddCredentialModalProps {
   isOpen: boolean;
   onClose: () => void;
+  sessionId: string;
   onCreated?: () => void;
 }
 
-export function AddCredentialModal({ isOpen, onClose, onCreated }: AddCredentialModalProps) {
+export function AddCredentialModal({ isOpen, onClose, sessionId, onCreated }: AddCredentialModalProps) {
   const { t } = useI18n();
   const [isMasked, setIsMasked] = useState(true);
   const [ttl, setTtl] = useState(15);
@@ -36,7 +37,7 @@ export function AddCredentialModal({ isOpen, onClose, onCreated }: AddCredential
     setError('');
     setSubmitting(true);
     try {
-      const resp = await createSecret({
+      const resp = await createSecret(sessionId, {
         secret_type: secretType,
         label: label.trim(),
         value: value.trim(),
