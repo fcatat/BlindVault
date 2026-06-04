@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Header
+from fastapi import APIRouter, Header, HTTPException
 
 from backend.agent.graph import run_agent
 from backend.models import AgentRunRequest, AgentRunResponse
 from backend.redis_store import get_store
-from backend.sanitizer import sanitize_message
+from backend.sanitizer import sanitize_message, detect_leaked_secrets
+from backend.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,14 @@ async def agent_run(
             len(auto_created_refs),
         )
 
+    # ---- 安全防护策略检测 (严格模式阻断) ----
+    leaked = detect_leaked_secrets(req.user_message)
+    if leaked is not None and get_settings().safety_policy_mode == "strict":
+        raise HTTPException(
+            status_code=400,
+            detail=f"检测到疑似明文凭证数据（{leaked}）外泄！在严格阻断模式下该指令已被拦截，请在凭证库中录入凭据并使用安全引用。"
+        )
+
     # ---- 调用 Agent（使用已脱敏的消息）----
     result = await run_agent(
         user_message=sanitized_message,
@@ -77,5 +86,9 @@ async def agent_run(
     all_refs = list(set(result.get("secret_refs_used", []) + auto_created_refs))
     result["secret_refs_used"] = all_refs
     result["sanitized_input"] = sanitized_message
+
+    # 旁路安全审计检测明文泄漏
+    result["leak_detected"] = leaked is not None
+    result["leaked_value"] = leaked
 
     return AgentRunResponse(**result)

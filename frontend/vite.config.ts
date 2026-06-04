@@ -4,6 +4,8 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const apiBase = process.env.VITE_API_BASE || 'http://localhost:8000';
+
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
@@ -17,11 +19,11 @@ export default defineConfig(() => {
       // 代理后端 API
       proxy: {
         '/api': {
-          target: 'http://localhost:8000',
+          target: apiBase,
           changeOrigin: true,
         },
         '/health': {
-          target: 'http://localhost:8000',
+          target: apiBase,
           changeOrigin: true,
         },
       },

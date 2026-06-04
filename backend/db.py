@@ -104,6 +104,7 @@ async def save_llm_config(
     base_url: str,
     api_key: str,
     encryption_key: bytes,
+    safety_policy_mode: str,
 ) -> None:
     """
     保存 LLM 配置到 PostgreSQL。
@@ -113,6 +114,7 @@ async def save_llm_config(
     await save_config("llm_provider", provider)
     await save_config("llm_model", model)
     await save_config("llm_base_url", base_url)
+    await save_config("safety_policy_mode", safety_policy_mode)
     if api_key:
         # 加密后存储
         encrypted = encrypt(api_key, encryption_key)
@@ -125,13 +127,13 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, str]:
     从 PostgreSQL 加载 LLM 配置。
 
     Returns:
-        {"llm_provider": ..., "llm_model": ..., "llm_base_url": ..., "llm_api_key": ...}
+        {"llm_provider": ..., "llm_model": ..., "llm_base_url": ..., "llm_api_key": ..., "safety_policy_mode": ...}
         缺失的字段不包含在字典中。
     """
     all_cfg = await load_all_config()
     result: dict[str, str] = {}
 
-    for key in ("llm_provider", "llm_model", "llm_base_url"):
+    for key in ("llm_provider", "llm_model", "llm_base_url", "safety_policy_mode"):
         if key in all_cfg:
             result[key] = all_cfg[key]
 

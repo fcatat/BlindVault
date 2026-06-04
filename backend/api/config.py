@@ -10,12 +10,15 @@ from __future__ import annotations
 import logging
 import re
 import json
+import asyncio
 
 from fastapi import APIRouter, HTTPException
+
 from pydantic import BaseModel
 
 from backend.config import get_settings
 from backend.db import save_llm_config
+from backend.agent.graph import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,8 @@ class LLMConfigResponse(BaseModel):
     llm_model: str
     llm_base_url: str
     has_api_key: bool  # 只告知是否已配置，不返回明文
+    safety_policy_mode: str
+    system_prompt: str
 
 
 class LLMConfigUpdate(BaseModel):
@@ -36,6 +41,7 @@ class LLMConfigUpdate(BaseModel):
     llm_model: str
     llm_base_url: str = ""
     llm_api_key: str = ""  # 空串 = 不更新
+    safety_policy_mode: str = "lax"
 
 
 @router.get("", response_model=LLMConfigResponse)
@@ -47,6 +53,8 @@ async def get_config():
         llm_model=settings.llm_model,
         llm_base_url=settings.llm_base_url,
         has_api_key=bool(settings.llm_api_key),
+        safety_policy_mode=settings.safety_policy_mode,
+        system_prompt=SYSTEM_PROMPT,
     )
 
 
@@ -65,6 +73,7 @@ async def update_config(payload: LLMConfigUpdate):
     settings.llm_provider = payload.llm_provider
     settings.llm_model = payload.llm_model
     settings.llm_base_url = payload.llm_base_url
+    settings.safety_policy_mode = payload.safety_policy_mode
 
     if payload.llm_api_key:
         settings.llm_api_key = payload.llm_api_key
@@ -77,16 +86,18 @@ async def update_config(payload: LLMConfigUpdate):
             base_url=settings.llm_base_url,
             api_key=payload.llm_api_key,  # 空串不会覆盖已有 key
             encryption_key=settings.encryption_key_bytes,
+            safety_policy_mode=settings.safety_policy_mode,
         )
     except Exception:
         logger.exception("配置持久化失败，但内存中已更新")
 
     logger.info(
-        "LLM 配置已更新: provider=%s, model=%s, base_url=%s, has_key=%s",
+        "LLM 配置已更新: provider=%s, model=%s, base_url=%s, has_key=%s, safety_policy_mode=%s",
         settings.llm_provider,
         settings.llm_model,
         settings.llm_base_url or "(empty)",
         bool(settings.llm_api_key),
+        settings.safety_policy_mode,
     )
 
     return LLMConfigResponse(
@@ -94,7 +105,95 @@ async def update_config(payload: LLMConfigUpdate):
         llm_model=settings.llm_model,
         llm_base_url=settings.llm_base_url,
         has_api_key=bool(settings.llm_api_key),
+        safety_policy_mode=settings.safety_policy_mode,
+        system_prompt=SYSTEM_PROMPT,
     )
+
+
+class ConnectionCheckResponse(BaseModel):
+    """LLM 连通性检测响应。"""
+    success: bool
+    status: str  # "connected" | "auth_error" | "network_error" | "mock"
+    detail: str = ""
+
+
+@router.post("/check", response_model=ConnectionCheckResponse)
+async def check_llm_connection():
+    """实时检测当前 LLM 网关和 API Key 的连通性。"""
+    settings = get_settings()
+
+    if settings.llm_provider == "mock":
+        return ConnectionCheckResponse(
+            success=True, 
+            status="mock", 
+            detail="Mock 模式无需验证连通性"
+        )
+
+    if not settings.llm_api_key:
+        return ConnectionCheckResponse(
+            success=False, 
+            status="auth_error", 
+            detail="未配置 API Key"
+        )
+
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+    except ImportError as e:
+        return ConnectionCheckResponse(
+            success=False,
+            status="network_error",
+            detail=f"系统缺失大模型调用组件: {str(e)}"
+        )
+
+    llm_kwargs = {
+        "model": settings.llm_model,
+        "api_key": settings.llm_api_key,
+        "temperature": 0.1,
+    }
+
+    if settings.llm_base_url:
+        llm_kwargs["base_url"] = settings.llm_base_url
+
+    try:
+        llm = ChatOpenAI(**llm_kwargs)
+        # 发送单字符消息测试
+        await asyncio.wait_for(
+            llm.ainvoke([HumanMessage(content="p")]),
+            timeout=5.0
+        )
+        return ConnectionCheckResponse(
+            success=True, 
+            status="connected", 
+            detail="连接成功"
+        )
+    except asyncio.TimeoutError:
+        return ConnectionCheckResponse(
+            success=False,
+            status="network_error",
+            detail="连接网关超时，请检查网关地址或网络是否通畅。"
+        )
+    except Exception as e:
+        err_msg = str(e)
+        logger.warning("LLM 连通性测试失败: %s", err_msg)
+
+        is_auth = any(
+            x in err_msg.lower()
+            for x in ["401", "unauthorized", "auth", "api key", "token", "credential", "invalid proxy"]
+        )
+        if is_auth:
+            return ConnectionCheckResponse(
+                success=False,
+                status="auth_error",
+                detail=f"凭证验证失败，网关返回: {err_msg}"
+            )
+        else:
+            return ConnectionCheckResponse(
+                success=False,
+                status="network_error",
+                detail=f"连接网关失败，网关返回: {err_msg}"
+            )
+
 
 
 class PatternItem(BaseModel):
@@ -116,6 +215,13 @@ async def get_patterns():
     except Exception as e:
         logger.warning("从数据库加载正则失败，返回默认规则: %s", str(e))
     return DEFAULT_PATTERNS
+
+
+@router.get("/patterns/audit", response_model=list[PatternItem])
+async def get_audit_patterns():
+    """获取系统内置的旁路审计与阻断规则（只读）。"""
+    from backend.sanitizer import AUDIT_PATTERNS
+    return AUDIT_PATTERNS
 
 
 @router.put("/patterns", response_model=list[PatternItem])
@@ -267,5 +373,67 @@ async def generate_regex(payload: RegexGenerateRequest):
         raise HTTPException(
             status_code=500,
             detail=f"AI 辅助生成正则失败: {str(e)}",
+        )
+
+
+# ------------------------------------------------------------
+# 诊断沙箱 (Diagnostics Sandbox) API 扩展
+# ------------------------------------------------------------
+
+class SandboxStatusResponse(BaseModel):
+    status: str
+    version: str
+    tools: list[str]
+
+
+@router.get("/sandbox/status", response_model=SandboxStatusResponse)
+async def get_sandbox_status():
+    """中转获取诊断沙箱的状态与可用客户端工具。"""
+    import httpx
+    settings = get_settings()
+    url = f"{settings.sandbox_url.rstrip('/')}/status"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                return SandboxStatusResponse(
+                    status=data.get("status", "healthy"),
+                    version=data.get("version", "unknown"),
+                    tools=data.get("tools", [])
+                )
+            else:
+                return SandboxStatusResponse(status="offline", version="unknown", tools=[])
+    except Exception as e:
+        logger.warning("无法访问沙箱服务 %s: %s", url, str(e))
+        return SandboxStatusResponse(status="offline", version="unknown", tools=[])
+
+
+@router.post("/sandbox/upgrade", response_model=SandboxStatusResponse)
+async def upgrade_sandbox():
+    """手动触发诊断沙箱的模拟升级。"""
+    import httpx
+    settings = get_settings()
+    url = f"{settings.sandbox_url.rstrip('/')}/upgrade"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url)
+            if resp.status_code == 200:
+                # 升级成功后，重新获取一下状态并返回
+                status_url = f"{settings.sandbox_url.rstrip('/')}/status"
+                status_resp = await client.get(status_url)
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    return SandboxStatusResponse(
+                        status=status_data.get("status", "healthy"),
+                        version=status_data.get("version", "unknown"),
+                        tools=status_data.get("tools", [])
+                    )
+            raise HTTPException(status_code=500, detail="沙箱升级接口调用失败")
+    except Exception as e:
+        logger.error("沙箱升级失败: %s", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail=f"无法连接到沙箱服务完成升级: {str(e)}"
         )
 

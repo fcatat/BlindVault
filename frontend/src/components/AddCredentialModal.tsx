@@ -19,7 +19,7 @@ export function AddCredentialModal({ isOpen, onClose, onCreated }: AddCredential
   const [secretType, setSecretType] = useState('password');
   const [label, setLabel] = useState('');
   const [value, setValue] = useState('');
-  const [allowedTool, setAllowedTool] = useState('browser_login_mock');
+  const [allowedTool, setAllowedTool] = useState('secure_shell');
   const [destination, setDestination] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SecretResponse | null>(null);
@@ -253,7 +253,7 @@ export function AddCredentialModal({ isOpen, onClose, onCreated }: AddCredential
                   onChange={(e) => setAllowedTool(e.target.value)}
                   className="w-full appearance-none bg-surface-container border border-outline-variant focus:border-primary focus:ring-1 focus:ring-primary transition-all text-on-surface text-sm rounded-lg px-4 py-3 pr-10 cursor-pointer outline-none"
                 >
-                  <option value="browser_login_mock">browser_login_mock</option>
+                  <option value="secure_shell">secure_shell</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none w-4 h-4" />
               </div>

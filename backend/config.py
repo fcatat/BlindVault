@@ -32,9 +32,13 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o"
     llm_api_key: str = ""
     llm_base_url: str = ""
+    safety_policy_mode: str = "lax"  # lax | strict
 
     # ---- PostgreSQL ----
     database_url: str = "postgresql://opssession:opssession@127.0.0.1:5433/blindvault"
+
+    # ---- 诊断沙箱 ----
+    sandbox_url: str = "http://sandbox:8001"
 
     # ---- 应用 ----
     log_level: str = "INFO"

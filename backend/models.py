@@ -48,7 +48,7 @@ class CreateSecretRequest(BaseModel):
     label: str = Field(..., min_length=1, max_length=256, description="Secret 的人类可读标签")
     value: SecretStr = Field(..., description="真实 secret 值（不会被记录或返回）")
     allowed_tools: list[str] = Field(
-        default_factory=lambda: ["browser_login_mock"],
+        default_factory=lambda: ["secure_shell"],
         description="允许使用此 secret 的工具列表",
     )
     allowed_destinations: list[str] = Field(
@@ -152,3 +152,5 @@ class AgentRunResponse(BaseModel):
     tool_calls: list[dict] = Field(default_factory=list)
     secret_refs_used: list[str] = Field(default_factory=list)
     sanitized_input: str = Field(default="", description="脱敏后的用户输入，用于构建安全的对话历史")
+    leak_detected: bool = Field(default=False, description="是否检测到敏感信息泄漏至模型")
+    leaked_value: Optional[str] = Field(default=None, description="泄漏的敏感明文内容")

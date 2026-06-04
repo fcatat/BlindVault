@@ -67,6 +67,20 @@ DEFAULT_PATTERNS = [
     },
 ]
 
+# 审计用敏感词匹配规则（仅供提示泄露，不作替换，防止社区版漏报导致密码发送至LLM）
+AUDIT_PATTERNS = [
+    {
+        "pattern": r'(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\s+(?:root|admin|administrator|ubuntu|centos|debian|user|mysql|postgres|oracle)\s+([^\s,，。；;、\n\r\u4e00-\u9fa5]+)',
+        "secret_type": "password",
+        "label": "ip_user_password",
+    },
+    {
+        "pattern": r'(?:[a-zA-Z0-9_\-\.]+@(?:[0-9]{1,3}\.){3}[0-9]{1,3})\s+([^\s,，。；;、\n\r\u4e00-\u9fa5]+)',
+        "secret_type": "password",
+        "label": "ssh_user_ip_password",
+    },
+]
+
 # 连接串密码检测（单独处理，不走通用模式）
 _CONNSTR_PATTERN = re.compile(
     r'((?:postgresql|postgres|mysql|redis|mongodb|amqp|mqtt)://'
@@ -91,10 +105,12 @@ def _compile_default_patterns() -> list[tuple[re.Pattern, str, str]]:
 
 
 async def get_compiled_patterns() -> list[tuple[re.Pattern, str, str]]:
-    """获取编译好的正则列表，优先从 PostgreSQL 数据库加载。"""
+    """获取编译好的正则列表，优先从 PostgreSQL 数据库加载并与内置新增默认模式合并。"""
     global _cached_patterns, _initialized
     if _initialized:
         return _cached_patterns
+
+    compiled_defaults = _compile_default_patterns()
 
     try:
         from backend.db import load_config
@@ -104,16 +120,26 @@ async def get_compiled_patterns() -> list[tuple[re.Pattern, str, str]]:
             import json
             patterns = json.loads(data_str)
             compiled = []
+            loaded_patterns_set = set()
             for item in patterns:
-                compiled.append((re.compile(item["pattern"], re.IGNORECASE), item["secret_type"], item["label"]))
+                pat_str = item["pattern"]
+                compiled.append((re.compile(pat_str, re.IGNORECASE), item["secret_type"], item["label"]))
+                loaded_patterns_set.add(pat_str.lower().strip())
+            
+            # 追加数据库中没有但内置默认定义的规则
+            for def_pat, def_type, def_lbl in compiled_defaults:
+                if def_pat.pattern.lower().strip() not in loaded_patterns_set:
+                    compiled.append((def_pat, def_type, def_lbl))
+
             _cached_patterns = compiled
             _initialized = True
             return _cached_patterns
     except Exception as e:
         logger.warning("无法从数据库加载正则规则，将使用内置默认规则: %s", str(e))
 
-    # 降级使用默认规则
-    return _compile_default_patterns()
+    _cached_patterns = compiled_defaults
+    _initialized = True
+    return _cached_patterns
 
 
 async def update_patterns_cache(patterns: list[dict]) -> None:
@@ -131,14 +157,23 @@ def _generate_secret_ref() -> str:
     return f"sec_live_{secrets_mod.token_urlsafe(24)}"
 
 
-async def detect_secrets(message: str) -> list[SensitiveMatch]:
+async def detect_secrets(message: str, include_audit: bool = False) -> list[SensitiveMatch]:
     """从消息中检测敏感信息，返回按位置从后向前排序的列表。"""
     matches: list[SensitiveMatch] = []
     seen_values: set[str] = set()
 
     compiled_patterns = await get_compiled_patterns()
 
-    for compiled, secret_type, label_prefix in compiled_patterns:
+    all_patterns = list(compiled_patterns)
+    if include_audit:
+        for item in AUDIT_PATTERNS:
+            try:
+                pat = re.compile(item["pattern"], re.IGNORECASE)
+                all_patterns.append((pat, item["secret_type"], item["label"]))
+            except Exception as e:
+                logger.error("编译审计正则失败: %s, error=%s", item["pattern"], str(e))
+
+    for compiled, secret_type, label_prefix in all_patterns:
         for m in compiled.finditer(message):
             try:
                 # 尝试抓取捕获组 1 (敏感值值体)
@@ -200,8 +235,8 @@ async def sanitize_message(
     session_id: str,
     tenant_id: str = "default",
     allowed_tools: Optional[list[str]] = None,
-    ttl_seconds: int = 600,
-    max_reads: int = 3,
+    ttl_seconds: int = 900,
+    max_reads: int = 999999,
 ) -> tuple[str, list[str]]:
     """
     预处理用户消息：自动检测敏感信息并替换为 secret_ref。
@@ -215,7 +250,10 @@ async def sanitize_message(
     if "{{secret:" in message:
         return message, []
 
-    matches = await detect_secrets(message)
+    settings = get_settings()
+    include_audit = (settings.safety_policy_mode == "lax")
+
+    matches = await detect_secrets(message, include_audit=include_audit)
     if not matches:
         return message, []
 
@@ -266,3 +304,21 @@ async def sanitize_message(
         )
 
     return sanitized, created_refs
+
+
+def detect_leaked_secrets(message: str) -> Optional[str]:
+    """检测消息中可能泄露给大模型的明文凭据（仅供旁路审计，不作替换）"""
+    for item in AUDIT_PATTERNS:
+        try:
+            pat = re.compile(item["pattern"], re.IGNORECASE)
+            for m in pat.finditer(message):
+                val = m.group(1).strip()
+                if len(val) >= 3:
+                    if "{{secret:" in val:
+                        continue
+                    skip_words = ('是什么', '是多少', '是啥', '多少', '什么', '忘了', '忘记了', 'what', 'is', 'the', 'my')
+                    if val.lower() not in skip_words:
+                        return val
+        except Exception as e:
+            logger.error("审计匹配出错: %s, error=%s", item["pattern"], str(e))
+    return None

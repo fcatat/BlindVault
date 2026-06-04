@@ -41,11 +41,12 @@ SECURE_SHELL_SCHEMA = {
         },
         "secret_ref": {
             "type": "string",
-            "description": "密码/密钥的 secret 引用 (sec_live_xxx)",
+            "description": "密码/密钥的 secret 引用 (sec_live_xxx)，若命令中不需要凭据则无需填写该可选参数。",
         },
     },
-    "required": ["command", "secret_ref"],
+    "required": ["command"],
 }
+
 
 # ============================================================
 # 安全控制
@@ -89,7 +90,7 @@ def _redact_output(output: str, real_secret: str) -> str:
 
 async def secure_shell(
     command: str,
-    secret_ref: str,
+    secret_ref: str | None = None,
     *,
     store: SecretStore,
     ctx: ExecutionContext,
@@ -99,27 +100,56 @@ async def secure_shell(
 
     Args:
         command: Shell 命令，$SECRET 作为密码占位
-        secret_ref: secret_ref (sec_live_xxx)
+        secret_ref: secret_ref (sec_live_xxx)，可选
         store: Redis 存储（由 executor 注入）
         ctx: 执行上下文（由 executor 注入）
 
     Returns:
         {"status": "success"|"error", "stdout": ..., "stderr": ..., "exit_code": ...}
     """
-    # 0. 验证 secret_ref 格式
-    if not re.match(r"^sec_(?:live|test)_[A-Za-z0-9_-]+$", secret_ref):
-        return {
-            "status": "error",
-            "reason": "Invalid secret reference format",
-            "stdout": "",
-            "stderr": "",
-            "exit_code": -1,
-        }
+    real_secret = ""
+    final_command = command
 
-    # 1. 检查危险命令
-    danger = _is_dangerous(command)
+    # 0. 验证 secret_ref 格式 (仅当传入时)
+    if secret_ref:
+        if not re.match(r"^sec_(?:live|test)_[A-Za-z0-9_-]+$", secret_ref):
+            return {
+                "status": "error",
+                "reason": "Invalid secret reference format",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+            }
+
+        # 2. 解密获取真实密码
+        try:
+            # 从 command 中提取可能的目标 URL/host 用于 destination 校验
+            # 简化处理：传空串跳过 destination 校验
+            real_secret = await resolve_secret(
+                store=store,
+                ctx=ctx,
+                request=ResolveRequest(
+                    secret_ref=secret_ref,
+                    requested_use="shell_command",
+                    destination="",  # secure_shell 不做目标校验
+                ),
+            )
+        except SecretResolutionError as e:
+            return {
+                "status": "error",
+                "reason": f"Secret 解析失败: {str(e)}",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+            }
+
+        # 3. 将 $SECRET 替换为真实密码
+        final_command = command.replace("$SECRET", real_secret)
+
+    # 1. 检查危险命令 (不管是命令替换前还是替换后，均进行敏感拦截)
+    danger = _is_dangerous(final_command)
     if danger:
-        logger.warning("secure_shell: 拦截危险命令: %s", command[:80])
+        logger.warning("secure_shell: 拦截危险命令: %s", final_command[:80])
         return {
             "status": "error",
             "reason": f"命令被安全策略拦截（匹配到危险模式）",
@@ -128,59 +158,30 @@ async def secure_shell(
             "exit_code": -1,
         }
 
-    # 2. 解密获取真实密码
-    real_secret = ""
+
+    # 4. 提交给隔离的沙箱执行
+    import httpx
+    from backend.config import get_settings
+    
+    settings = get_settings()
+    sandbox_exec_url = f"{settings.sandbox_url.rstrip('/')}/execute"
+    
     try:
-        # 从 command 中提取可能的目标 URL/host 用于 destination 校验
-        # 简化处理：传空串跳过 destination 校验
-        real_secret = await resolve_secret(
-            store=store,
-            ctx=ctx,
-            request=ResolveRequest(
-                secret_ref=secret_ref,
-                requested_use="shell_command",
-                destination="",  # secure_shell 不做目标校验
-            ),
-        )
-    except SecretResolutionError as e:
-        return {
-            "status": "error",
-            "reason": f"Secret 解析失败: {str(e)}",
-            "stdout": "",
-            "stderr": "",
-            "exit_code": -1,
-        }
-
-    # 3. 将 $SECRET 替换为真实密码
-    final_command = command.replace("$SECRET", real_secret)
-
-    # 4. 执行命令
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            final_command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # 不通过环境变量传递（某些命令需要直接替换）
-        )
-
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=EXECUTION_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            return {
-                "status": "error",
-                "reason": f"命令执行超时（{EXECUTION_TIMEOUT}秒）",
-                "stdout": "",
-                "stderr": "",
-                "exit_code": -1,
-            }
-
-        stdout = stdout_bytes.decode("utf-8", errors="replace")
-        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        async with httpx.AsyncClient(timeout=EXECUTION_TIMEOUT) as client:
+            resp = await client.post(sandbox_exec_url, json={"command": final_command})
+            if resp.status_code != 200:
+                return {
+                    "status": "error",
+                    "reason": f"沙箱执行接口返回异常状态码: {resp.status_code}",
+                    "stdout": "",
+                    "stderr": resp.text,
+                    "exit_code": -1,
+                }
+            
+            res_data = resp.json()
+            stdout = res_data.get("stdout", "")
+            stderr = res_data.get("stderr", "")
+            exit_code = res_data.get("exit_code", -1)
 
         # 5. 脱敏输出（确保真实密码不出现在返回中）
         stdout = _redact_output(stdout, real_secret)
@@ -189,15 +190,24 @@ async def secure_shell(
         # 限制输出长度
         max_len = 4096
         if len(stdout) > max_len:
-            stdout = stdout[:max_len] + f"\n... (截断，共 {len(stdout_bytes)} 字节)"
+            stdout = stdout[:max_len] + "\n... (输出被沙箱截断)"
         if len(stderr) > max_len:
-            stderr = stderr[:max_len] + f"\n... (截断，共 {len(stderr_bytes)} 字节)"
+            stderr = stderr[:max_len] + "\n... (输出被沙箱截断)"
 
         return {
-            "status": "success" if proc.returncode == 0 else "error",
+            "status": "success" if exit_code == 0 else "error",
             "stdout": stdout.strip(),
             "stderr": stderr.strip(),
-            "exit_code": proc.returncode,
+            "exit_code": exit_code,
+        }
+    except httpx.RequestError as exc:
+        logger.error("无法连接到诊断沙箱: %s", str(exc))
+        return {
+            "status": "error",
+            "reason": f"无法连接到隔离的诊断沙箱，请检查 sandbox 容器是否正常启动。原因: {str(exc)}",
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
         }
 
     except Exception as e:

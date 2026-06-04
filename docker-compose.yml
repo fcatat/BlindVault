@@ -23,6 +23,12 @@ services:
       interval: 5s
       retries: 5
 
+  sandbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    restart: unless-stopped
+
   backend:
     build: .
     restart: unless-stopped
@@ -33,10 +39,13 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      sandbox:
+        condition: service_started
     environment:
       - BLINDVAULT_ENCRYPTION_KEY=${BLINDVAULT_ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://blindvault:${PG_PASSWORD:-blindvault_default_pg_pass}@postgres:5432/blindvault
+      - SANDBOX_URL=http://sandbox:8001
       - LLM_PROVIDER=${LLM_PROVIDER:-mock}
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}

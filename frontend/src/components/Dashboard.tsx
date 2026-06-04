@@ -7,7 +7,7 @@ import {
 import { listSecrets, revokeSecret, type SecretMetadata } from '../api';
 import { useI18n } from '../i18n';
 
-export function Dashboard() {
+export function Dashboard({ sessionId }: { sessionId: string, key?: string }) {
   const { t } = useI18n();
   const [secrets, setSecrets] = useState<SecretMetadata[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,21 +17,21 @@ export function Dashboard() {
   const fetchSecrets = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await listSecrets();
+      const data = await listSecrets(sessionId);
       setSecrets(data);
     } catch (e) {
       console.error('获取 secret 列表失败:', e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [sessionId]);
 
   useEffect(() => { fetchSecrets(); }, [fetchSecrets]);
 
   const handleRevoke = async (ref: string) => {
     try {
       setRevoking(ref);
-      await revokeSecret(ref);
+      await revokeSecret(sessionId, ref);
       await fetchSecrets();
     } catch (e) {
       console.error('撤销失败:', e);

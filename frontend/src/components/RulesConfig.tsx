@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  EyeOff, Plus, Trash2, Save, Play, RefreshCw, 
+  Eye, EyeOff, Plus, Trash2, Save, Play, RefreshCw, 
   HelpCircle, CheckCircle, Sparkles, X, AlertCircle, Check
 } from 'lucide-react';
 import { useI18n } from '../i18n';
@@ -17,6 +17,10 @@ export function RulesConfig() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'failed'>('idle');
+  
+  // 内置只读审计规则状态
+  const [auditPatterns, setAuditPatterns] = useState<PatternItem[]>([]);
+  const [showAuditPanel, setShowAuditPanel] = useState(false);
   
   // 匹配测试工具状态
   const [testText, setTestText] = useState('');
@@ -49,8 +53,21 @@ export function RulesConfig() {
     }
   };
 
+  const fetchAuditPatterns = async () => {
+    try {
+      const response = await fetch('/api/config/patterns/audit');
+      if (response.ok) {
+        const data = await response.json();
+        setAuditPatterns(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch audit patterns', error);
+    }
+  };
+
   useEffect(() => {
     fetchPatterns();
+    fetchAuditPatterns();
   }, []);
 
   // 2. 规则增删改
@@ -351,7 +368,8 @@ export function RulesConfig() {
           <span className="text-sm text-on-surface-variant font-medium">{t('dashboard.loading')}</span>
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+        <>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
           
           {/* Rules List (Left 2 columns) */}
           <div className="xl:col-span-2 space-y-4">
@@ -507,7 +525,55 @@ export function RulesConfig() {
           </div>
 
         </div>
-      )}
+
+        {/* Built-in Audit Rules Read-Only Panel */}
+        {auditPatterns.length > 0 && (
+          <div className="mt-8 glass-panel border border-outline-variant/60 rounded-2xl overflow-hidden shadow-sm bg-surface-container-low/30 animate-in fade-in duration-300">
+            <div className="px-6 py-4 border-b border-outline-variant/30 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 text-primary" />
+                <span className="text-sm font-semibold text-on-surface">{t('rules.auditTitle')}</span>
+              </div>
+              <button
+                onClick={() => setShowAuditPanel(!showAuditPanel)}
+                className="text-xs text-primary hover:text-primary-container font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                {showAuditPanel ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                <span>{showAuditPanel ? t('rules.auditHide') : t('rules.auditShow')}</span>
+              </button>
+            </div>
+
+            {showAuditPanel && (
+              <div className="p-6 bg-surface-container-low/10 border-t border-outline-variant/20 animate-in slide-in-from-top-2 duration-300 space-y-4">
+                <p className="text-xs text-on-surface-variant/80 leading-relaxed bg-surface-container p-3.5 rounded-xl border border-outline-variant/40">
+                  {t('rules.auditDesc')}
+                </p>
+                <div className="overflow-x-auto border border-outline-variant/40 rounded-xl bg-surface-dim">
+                  <table className="w-full text-left text-xs border-collapse font-body">
+                    <thead>
+                      <tr className="bg-surface-container text-on-surface font-semibold border-b border-outline-variant/30">
+                        <th className="py-3 px-4 font-headline w-6/12">{t('rules.regex')}</th>
+                        <th className="py-3 px-4 font-headline w-3/12">{t('rules.type')}</th>
+                        <th className="py-3 px-4 font-headline w-3/12">{t('rules.label')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline-variant/20 font-mono">
+                      {auditPatterns.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-surface-container-lowest/50 select-all">
+                          <td className="py-3 px-4 text-primary whitespace-pre break-all">{item.pattern}</td>
+                          <td className="py-3 px-4 text-on-surface-variant">{item.secret_type}</td>
+                          <td className="py-3 px-4 font-semibold text-on-surface">{item.label}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </>
+    )}
 
       {/* AI Regex Generator Modal */}
       {isAiModalOpen && (

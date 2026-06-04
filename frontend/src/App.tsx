@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Sidebar, SessionInfo } from './components/Sidebar';
 import { Header } from './components/Header';
 import { Dashboard } from './components/Dashboard';
@@ -26,9 +26,44 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
 
   // Session management
-  const [sessions, setSessions] = useState<SessionInfo[]>([createSession(1)]);
-  const [activeSessionId, setActiveSessionId] = useState(sessions[0].id);
-  const [sessionCounter, setSessionCounter] = useState(2);
+  const [sessions, setSessions] = useState<SessionInfo[]>(() => {
+    try {
+      const cached = localStorage.getItem('bv_sessions');
+      if (cached) return JSON.parse(cached);
+    } catch (e) {
+      console.error('加载 sessions 缓存失败:', e);
+    }
+    return [createSession(1)];
+  });
+
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
+    try {
+      const cachedActive = localStorage.getItem('bv_active_session_id');
+      if (cachedActive) return cachedActive;
+    } catch (e) {}
+    return sessions[0]?.id || '';
+  });
+
+  const [sessionCounter, setSessionCounter] = useState<number>(() => {
+    try {
+      const cached = localStorage.getItem('bv_session_counter');
+      if (cached) return parseInt(cached, 10);
+    } catch (e) {}
+    return sessions.length + 1;
+  });
+
+  // 同步 sessions 数据到 localStorage
+  useEffect(() => {
+    localStorage.setItem('bv_sessions', JSON.stringify(sessions));
+    localStorage.setItem('bv_session_counter', sessionCounter.toString());
+  }, [sessions, sessionCounter]);
+
+  // 同步 activeSessionId 到 localStorage
+  useEffect(() => {
+    if (activeSessionId) {
+      localStorage.setItem('bv_active_session_id', activeSessionId);
+    }
+  }, [activeSessionId]);
 
   const handleSecretCreated = useCallback(() => {
     setRefreshKey(prev => prev + 1);
@@ -43,6 +78,12 @@ export default function App() {
   }, [sessionCounter]);
 
   const handleDeleteSession = useCallback((id: string) => {
+    try {
+      localStorage.removeItem(`bv_chat_${id}`);
+      localStorage.removeItem(`bv_chat_active_trace_${id}`);
+    } catch (e) {
+      console.error('清除会话缓存失败:', e);
+    }
     setSessions(prev => {
       const filtered = prev.filter(s => s.id !== id);
       if (filtered.length === 0) {
@@ -66,7 +107,7 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-background text-on-surface">
+    <div className="flex h-screen overflow-hidden bg-background text-on-surface">
       <Sidebar 
         activeView={activeView} 
         onNavigate={(view) => setActiveView(view)} 
@@ -78,11 +119,16 @@ export default function App() {
         onDeleteSession={handleDeleteSession}
       />
       
-      <div className="flex-1 flex flex-col md:ml-64 relative bg-background">
+      <div className="flex-1 flex flex-col md:ml-64 relative bg-background h-screen overflow-hidden">
         <Header />
         
-        <main className="flex-1 flex flex-col relative w-full h-full overflow-y-auto">
-          {activeView === 'dashboard' && <Dashboard key={refreshKey} />}
+        <main className={`flex-1 flex flex-col relative w-full h-full min-h-0 ${activeView === 'chat' ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          {activeView === 'dashboard' && (
+            <Dashboard 
+              key={`${refreshKey}_${activeSessionId}`} 
+              sessionId={activeSessionId} 
+            />
+          )}
           {activeView === 'chat' && (
             <Chat 
               key={activeSessionId}

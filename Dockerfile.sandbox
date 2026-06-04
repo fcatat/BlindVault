@@ -1,0 +1,40 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 1. 安装诊断沙箱运行所需要的系统及运维工具依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    ca-certificates \
+    curl \
+    wget \
+    openssh-client \
+    sshpass \
+    postgresql-client \
+    mariadb-client \
+    redis-tools \
+    sqlite3 \
+    iputils-ping \
+    dnsutils \
+    net-tools \
+    telnet \
+    procps \
+    htop \
+    jq \
+    zip \
+    unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# 2. 安装 Kubernetes 命令行工具 kubectl
+RUN curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl" && \
+    chmod +x /usr/local/bin/kubectl
+
+# 3. 安装沙箱 RPC 服务极简依赖
+RUN pip install --no-cache-dir fastapi uvicorn pydantic
+
+# 4. 拷贝沙箱执行代理代码
+COPY sandbox/ ./sandbox/
+
+EXPOSE 8001
+
+CMD ["uvicorn", "sandbox.sandbox_agent:app", "--host", "0.0.0.0", "--port", "8001"]
