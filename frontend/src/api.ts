@@ -25,6 +25,19 @@ const DEFAULT_HEADERS: Record<string, string> = {
   'X-Tenant-Id': 'default',
 };
 
+// 统一错误处理，支持解包 FastAPI 422 验证报错
+async function throwError(res: Response): Promise<never> {
+  const err = await res.json().catch(() => ({}));
+  let errMsg = err.detail;
+  if (Array.isArray(err.detail)) {
+    // 针对 422 validation_error 展开为清晰的中文字符串
+    errMsg = err.detail.map((d: any) => `${d.loc.join('.')}: ${d.msg}`).join('; ');
+  } else if (typeof err.detail === 'object' && err.detail !== null) {
+    errMsg = JSON.stringify(err.detail);
+  }
+  throw new Error(errMsg || `请求失败: ${res.status}`);
+}
+
 // ---- 类型 ----
 
 export interface SecretResponse {
@@ -87,8 +100,7 @@ export async function createSecret(payload: CreateSecretPayload): Promise<Secret
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `创建失败: ${res.status}`);
+    await throwError(res);
   }
   return res.json();
 }
@@ -107,8 +119,7 @@ export async function revokeSecret(sessionId: string, secretRef: string): Promis
     headers: getHeaders(sessionId),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `撤销失败: ${res.status}`);
+    await throwError(res);
   }
 }
 
@@ -120,8 +131,7 @@ export async function runAgent(payload: AgentRunPayload, signal?: AbortSignal): 
     signal,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `Agent 执行失败: ${res.status}`);
+    await throwError(res);
   }
   return res.json();
 }
@@ -163,8 +173,7 @@ export async function updateConfig(payload: LLMConfigUpdate): Promise<LLMConfig>
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `更新配置失败: ${res.status}`);
+    await throwError(res);
   }
   return res.json();
 }
@@ -181,8 +190,7 @@ export async function checkLlmConnection(): Promise<ConnectionCheckResult> {
     headers: DEFAULT_HEADERS,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `连通性检测失败: ${res.status}`);
+    await throwError(res);
   }
   return res.json();
 }
@@ -218,8 +226,7 @@ export async function upgradeSandbox(): Promise<SandboxStatus> {
     headers: DEFAULT_HEADERS,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `沙箱升级失败: ${res.status}`);
+    await throwError(res);
   }
   return res.json();
 }

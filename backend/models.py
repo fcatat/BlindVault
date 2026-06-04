@@ -56,7 +56,7 @@ class CreateSecretRequest(BaseModel):
         description="允许的目标地址列表（origin 级别，如 https://example.com）",
     )
     ttl_seconds: int = Field(default=3600, ge=60, le=86400, description="过期时间（秒）")
-    max_reads: int = Field(default=1, ge=1, le=100, description="最大读取次数")
+    max_reads: int = Field(default=1, ge=1, le=999999, description="最大读取次数")
 
 
 # ============================================================
