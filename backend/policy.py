@@ -122,7 +122,11 @@ async def resolve_secret(
 
     # 4. 检查 session_id
     if record.session_id != ctx.session_id:
-        logger.warning("Secret 解析失败: session_id 不匹配")
+        logger.warning(
+            "Secret 解析失败: session_id 不匹配! record.session_id=%s, ctx.session_id=%s",
+            record.session_id,
+            ctx.session_id,
+        )
         raise SecretResolutionError("session_mismatch")
 
     # 5. 检查 tenant_id
