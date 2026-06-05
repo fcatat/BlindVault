@@ -6,6 +6,7 @@ import { createSecret, type SecretResponse } from '../api';
 import { useI18n } from '../i18n';
 
 interface AddCredentialModalProps {
+  key?: React.Key;
   isOpen: boolean;
   onClose: () => void;
   sessionId: string;

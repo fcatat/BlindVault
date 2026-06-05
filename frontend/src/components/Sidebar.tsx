@@ -82,18 +82,16 @@ export function Sidebar({
             >
               <MessageSquare className="w-3.5 h-3.5 shrink-0" />
               <span className="text-sm truncate flex-1">{s.title}</span>
-              {sessions.length > 1 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDeleteSession(s.id);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-100 text-red-400 hover:text-red-600 transition-all"
-                  title={t('sidebar.deleteSession')}
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteSession(s.id);
+                }}
+                className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-100 text-red-400 hover:text-red-600 transition-all"
+                title={t('sidebar.deleteSession')}
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
             </div>
           ))}
         </div>

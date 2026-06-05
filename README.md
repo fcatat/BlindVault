@@ -47,8 +47,10 @@ User Input ──→ [Auto Sanitizer] ──→ LLM (only sees {{secret:sec_xxx}
 |---------|-------------|
 | 🔍 **Auto Sanitization** | Regex-based detection of passwords, tokens, API keys, connection strings |
 | 🔐 **AES-256-GCM Encryption** | All secrets encrypted at rest with configurable key |
-| 🛡️ **Secure Shell Tool** | Execute psql, ssh, curl, mysql, redis-cli — AI never sees the password |
-| ⏱️ **TTL & Read Limits** | Secrets auto-expire; configurable max reads per secret |
+| 🛡️ **Sandbox Isolation** | Diagnostic commands (e.g., `secure_shell`) run inside an isolated Docker sandbox. The backend service stays clean, eliminating host privilege escalation risks. Supports bi-directional output sanitization |
+| 💾 **PG Metadata Archiver** | Dual-write design. Metadata is archived to PostgreSQL (excluding secrets plaintext). Expired secrets remain persistent on the dashboard even after Redis TTL eviction for auditing |
+| ⏱️ **Smooth Ticker Countdown** | Frontend uses a 1s local interval. Countdown and progress bar slide smoothly. On zero, the card auto-disables and stats adjust in real-time without API overhead |
+| 📋 **One-Click Reference Copy** | Interactive copy button for `{{secret:sec_xxx}}` placeholder on the credential card with feedback checkmark to prevent typing mistakes |
 | 📝 **History Sanitization** | Conversation history uses sanitized text — no password leaks in multi-turn |
 | 🌐 **i18n** | Full English/Chinese support with one-click toggle |
 | 🤖 **Any LLM** | OpenAI-compatible API (GPT, Claude, Qwen, DeepSeek, local models via LiteLLM) |

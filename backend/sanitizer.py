@@ -46,12 +46,12 @@ class SensitiveMatch:
 # 默认的内置敏感字段匹配规则
 DEFAULT_PATTERNS = [
     {
-        "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|\s+)([^\s,，。；;、\n\r]+)',
         "secret_type": "password",
         "label": "密码",
     },
     {
-        "pattern": r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "pattern": r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+is\s+|\s+)([^\s,，。；;、\n\r]+)',
         "secret_type": "password",
         "label": "password",
     },

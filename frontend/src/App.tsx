@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
+import { useI18n } from './i18n';
 import { Sidebar, SessionInfo } from './components/Sidebar';
 import { Header } from './components/Header';
 import { Dashboard } from './components/Dashboard';
@@ -12,10 +13,10 @@ function generateSessionId(): string {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createSession(index: number): SessionInfo {
+function createSession(title: string): SessionInfo {
   return {
     id: generateSessionId(),
-    title: `Session ${index}`,
+    title,
     createdAt: new Date(),
   };
 }
@@ -33,7 +34,7 @@ export default function App() {
     } catch (e) {
       console.error('加载 sessions 缓存失败:', e);
     }
-    return [createSession(1)];
+    return [createSession('你好')];
   });
 
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
@@ -44,19 +45,12 @@ export default function App() {
     return sessions[0]?.id || '';
   });
 
-  const [sessionCounter, setSessionCounter] = useState<number>(() => {
-    try {
-      const cached = localStorage.getItem('bv_session_counter');
-      if (cached) return parseInt(cached, 10);
-    } catch (e) {}
-    return sessions.length + 1;
-  });
+  const { t } = useI18n();
 
   // 同步 sessions 数据到 localStorage
   useEffect(() => {
     localStorage.setItem('bv_sessions', JSON.stringify(sessions));
-    localStorage.setItem('bv_session_counter', sessionCounter.toString());
-  }, [sessions, sessionCounter]);
+  }, [sessions]);
 
   // 同步 activeSessionId 到 localStorage
   useEffect(() => {
@@ -70,12 +64,11 @@ export default function App() {
   }, []);
 
   const handleNewSession = useCallback(() => {
-    const newSession = createSession(sessionCounter);
+    const newSession = createSession(t('sidebar.newSession'));
     setSessions(prev => [newSession, ...prev]);
     setActiveSessionId(newSession.id);
-    setSessionCounter(prev => prev + 1);
     setActiveView('chat');
-  }, [sessionCounter]);
+  }, [t]);
 
   const handleDeleteSession = useCallback((id: string) => {
     try {
@@ -87,9 +80,8 @@ export default function App() {
     setSessions(prev => {
       const filtered = prev.filter(s => s.id !== id);
       if (filtered.length === 0) {
-        const newSession = createSession(sessionCounter);
+        const newSession = createSession(t('sidebar.newSession'));
         setActiveSessionId(newSession.id);
-        setSessionCounter(c => c + 1);
         return [newSession];
       }
       if (activeSessionId === id) {
@@ -97,7 +89,7 @@ export default function App() {
       }
       return filtered;
     });
-  }, [activeSessionId, sessionCounter]);
+  }, [activeSessionId, t]);
 
   const handleUpdateSessionTitle = useCallback((sessionId: string, firstMessage: string) => {
     const title = firstMessage.slice(0, 24) + (firstMessage.length > 24 ? '…' : '');

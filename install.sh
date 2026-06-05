@@ -85,7 +85,7 @@ check_prerequisites() {
 }
 
 collect_config() {
-  step "1/3" "Configuration"
+  step "2/4" "Configuration"
 
   # Ports
   info "Port settings ${DIM}(press Enter for defaults)${NC}"
@@ -106,7 +106,7 @@ collect_config() {
 # Step 3: Setup
 # ============================================================
 setup_project() {
-  step "2/3" "Setting up BlindVault..."
+  step "3/4" "Setting up BlindVault..."
 
   # Clone if not in repo
   if [ -f "docker-compose.yml" ] && grep -q "blindvault" docker-compose.yml 2>/dev/null; then
@@ -166,7 +166,7 @@ EOF
 # Step 4: Launch
 # ============================================================
 launch_services() {
-  step "3/3" "Starting services..."
+  step "4/4" "Starting services..."
 
   local compose_cmd="docker compose"
   if ! docker compose version &>/dev/null 2>&1; then

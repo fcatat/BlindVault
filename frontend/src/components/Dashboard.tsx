@@ -13,6 +13,14 @@ export function Dashboard({ sessionId }: { sessionId: string, key?: string }) {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'all' | 'active' | 'expiring' | 'consumed'>('all');
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchSecrets = useCallback(async () => {
     try {
@@ -41,23 +49,29 @@ export function Dashboard({ sessionId }: { sessionId: string, key?: string }) {
   };
 
   // 统计
-  const activeCount = secrets.filter(s => s.status === 'active').length;
+  const activeCount = secrets.filter(s => s.status === 'active' && new Date(s.expires_at).getTime() > now).length;
   const expiringCount = secrets.filter(s => {
     if (s.status !== 'active') return false;
-    const ttl = new Date(s.expires_at).getTime() - Date.now();
-    return ttl < 3600_000; // < 1h
+    const ttl = new Date(s.expires_at).getTime() - now;
+    return ttl < 3600_000 && ttl > 0;
   }).length;
-  const consumedCount = secrets.filter(s => ['exhausted', 'revoked', 'expired'].includes(s.status)).length;
+  const consumedCount = secrets.filter(s => 
+    ['exhausted', 'revoked', 'expired'].includes(s.status) || 
+    (s.status === 'active' && new Date(s.expires_at).getTime() <= now)
+  ).length;
 
   // 过滤
   const filtered = secrets.filter(s => {
+    const isExpired = s.status === 'active' && new Date(s.expires_at).getTime() <= now;
+    const currentStatus = isExpired ? 'expired' : s.status;
+
     if (filter === 'all') return true;
-    if (filter === 'active') return s.status === 'active';
+    if (filter === 'active') return currentStatus === 'active';
     if (filter === 'expiring') {
-      const ttl = new Date(s.expires_at).getTime() - Date.now();
-      return s.status === 'active' && ttl < 3600_000;
+      const ttl = new Date(s.expires_at).getTime() - now;
+      return currentStatus === 'active' && ttl < 3600_000 && ttl > 0;
     }
-    return ['exhausted', 'revoked', 'expired'].includes(s.status);
+    return ['exhausted', 'revoked', 'expired'].includes(currentStatus);
   });
 
   return (
@@ -147,13 +161,15 @@ export function Dashboard({ sessionId }: { sessionId: string, key?: string }) {
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {filtered.map(secret => {
-            const isConsumed = ['exhausted', 'revoked', 'expired'].includes(secret.status);
-            const ttlMs = new Date(secret.expires_at).getTime() - Date.now();
+            const isExpired = secret.status === 'active' && new Date(secret.expires_at).getTime() <= now;
+            const isConsumed = ['exhausted', 'revoked', 'expired'].includes(secret.status) || isExpired;
+            const ttlMs = new Date(secret.expires_at).getTime() - now;
             const ttlPercent = isConsumed ? 0 : Math.max(0, Math.min(100, (ttlMs / 3600_000) * 100));
             const isExpiring = !isConsumed && ttlMs < 3600_000 && ttlMs > 0;
             const ttlStr = isConsumed ? '00:00:00' : formatTTL(ttlMs);
             
-            const statusLabel = secret.status === 'active' 
+            const statusLabel = isExpired ? 'Expired'
+              : secret.status === 'active' 
               ? (isExpiring ? 'Expiring' : 'Active')
               : secret.status === 'exhausted' ? 'Exhausted'
               : secret.status === 'revoked' ? 'Revoked' 
@@ -197,7 +213,7 @@ export function Dashboard({ sessionId }: { sessionId: string, key?: string }) {
                   isConsumed ? (
                     <button disabled className="w-full bg-surface-container border border-outline-variant rounded py-2 px-4 flex items-center justify-center gap-2 text-sm font-medium text-outline mt-auto cursor-not-allowed">
                       <Trash2 className="w-4 h-4" />
-                      {secret.status === 'revoked' ? t('dashboard.revoked') : secret.status === 'exhausted' ? t('dashboard.exhausted') : t('dashboard.expired')}
+                      {isExpired ? t('dashboard.expired') : secret.status === 'revoked' ? t('dashboard.revoked') : secret.status === 'exhausted' ? t('dashboard.exhausted') : t('dashboard.expired')}
                     </button>
                   ) : (
                     <button
