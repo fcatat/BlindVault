@@ -125,6 +125,12 @@ async def save_llm_config(
     api_key: str,
     encryption_key: bytes,
     safety_policy_mode: str,
+    local_model_url: str = "",
+    local_model_name: str = "qwen3:0.6b",
+    local_model_timeout: float = 2.0,
+    local_model_api_type: str = "ollama",
+    local_model_prompt: str = "",
+    local_model_disable_cot: bool = True,
 ) -> None:
     """
     保存 LLM 配置到 PostgreSQL。
@@ -135,6 +141,13 @@ async def save_llm_config(
     await save_config("llm_model", model)
     await save_config("llm_base_url", base_url)
     await save_config("safety_policy_mode", safety_policy_mode)
+    await save_config("local_model_url", local_model_url)
+    await save_config("local_model_name", local_model_name)
+    await save_config("local_model_timeout", str(local_model_timeout))
+    await save_config("local_model_api_type", local_model_api_type)
+    await save_config("local_model_prompt", local_model_prompt)
+    await save_config("local_model_disable_cot", "true" if local_model_disable_cot else "false")
+
     if api_key:
         # 加密后存储
         encrypted = encrypt(api_key, encryption_key)
@@ -142,7 +155,7 @@ async def save_llm_config(
     logger.info("LLM 配置已持久化到 PostgreSQL")
 
 
-async def load_llm_config(encryption_key: bytes) -> dict[str, str]:
+async def load_llm_config(encryption_key: bytes) -> dict[str, any]:
     """
     从 PostgreSQL 加载 LLM 配置。
 
@@ -151,11 +164,23 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, str]:
         缺失的字段不包含在字典中。
     """
     all_cfg = await load_all_config()
-    result: dict[str, str] = {}
+    result: dict[str, any] = {}
 
-    for key in ("llm_provider", "llm_model", "llm_base_url", "safety_policy_mode"):
+    for key in (
+        "llm_provider", "llm_model", "llm_base_url", "safety_policy_mode",
+        "local_model_url", "local_model_name", "local_model_api_type", "local_model_prompt"
+    ):
         if key in all_cfg:
             result[key] = all_cfg[key]
+
+    if "local_model_timeout" in all_cfg:
+        try:
+            result["local_model_timeout"] = float(all_cfg["local_model_timeout"])
+        except ValueError:
+            result["local_model_timeout"] = 2.0
+
+    if "local_model_disable_cot" in all_cfg:
+        result["local_model_disable_cot"] = all_cfg["local_model_disable_cot"].lower() == "true"
 
     # 解密 API Key
     encrypted_key = all_cfg.get("llm_api_key_encrypted")
@@ -166,6 +191,7 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, str]:
             logger.warning("无法解密持久化的 API Key，可能加密密钥已变更")
 
     return result
+
 
 
 # ============================================================

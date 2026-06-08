@@ -132,6 +132,15 @@ const translations = {
     'config.localModelNotConfigured': '未配置',
     'config.localModelAvailableModels': '可用模型',
     'config.localModelEEBadge': 'Enterprise',
+    'config.localModelSettings': '模型网关设置',
+    'config.localModelSaveSuccess': '配置保存成功',
+    'config.localModelSettingsDesc': '本地模型网关作为安全增强层，在用户消息发送至公网 LLM 之前，提供实时的私密数据抓取与擦除。如果模型响应时间超出设定的阈值或模型异常，系统将自动滑向经典的正则表达式脱敏，确保用户体验连贯。',
+    'config.localModelApiType': 'API 协议类型',
+    'config.localModelPromptLabel': '自定义 System Prompt',
+    'config.localModelPromptHint': '本地模型执行提取任务所用的核心指令。留空则采用系统内置的默认提示词。',
+    'config.localModelDisableCot': '禁用 CoT 思考链 (No-CoT)',
+    'config.localModelDisableCotHint': '开启后将强制限制模型输出思考步骤，极大地降低网络推理延迟，保障脱敏的实时性。',
+    'config.localModelAdvanced': '高级网关配置',
 
 
     // Dashboard
@@ -397,6 +406,15 @@ const translations = {
     'config.localModelNotConfigured': 'Not Configured',
     'config.localModelAvailableModels': 'Available Models',
     'config.localModelEEBadge': 'Enterprise',
+    'config.localModelSettings': 'Model Gateway Settings',
+    'config.localModelSaveSuccess': 'Configuration saved successfully',
+    'config.localModelSettingsDesc': 'The local model gateway acts as a security enhancement layer, providing real-time private data capture and redaction before user messages are sent to public LLMs. If the model response exceeds the threshold or errors out, the system automatically falls back to classical regex sanitization to ensure a smooth user experience.',
+    'config.localModelApiType': 'API Protocol Type',
+    'config.localModelPromptLabel': 'Custom System Prompt',
+    'config.localModelPromptHint': 'Core instruction for the local model extraction task. Leave empty to use system default prompt.',
+    'config.localModelDisableCot': 'Disable CoT Reasoning',
+    'config.localModelDisableCotHint': 'Forces model to skip outputting thinking steps, significantly reducing inference latency for real-time sanitization.',
+    'config.localModelAdvanced': 'Advanced Gateway Options',
 
 
     // Dashboard

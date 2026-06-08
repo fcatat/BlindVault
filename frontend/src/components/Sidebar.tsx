@@ -1,6 +1,7 @@
 import React from 'react';
 import { ViewState } from '../types';
 import { useI18n } from '../i18n';
+import { EEStatus } from '../api';
 import { 
   ShieldAlert, Plus, MessageSquare, Key, SquareTerminal, 
   Bot, FileText, FileBadge, PlusCircle, Trash2,
@@ -22,11 +23,13 @@ interface SidebarProps {
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
+  eeStatus: EEStatus | null;
 }
 
 export function Sidebar({ 
   activeView, onNavigate, onOpenModal,
   sessions, activeSessionId, onSelectSession, onNewSession, onDeleteSession,
+  eeStatus,
 }: SidebarProps) {
   const { t } = useI18n();
 
@@ -132,27 +135,45 @@ export function Sidebar({
         <EnterpriseNavItem 
           icon={<Cpu className="w-4 h-4" />} 
           label={t('sidebar.localModelGateway')}
+          licensed={!!eeStatus?.licensed}
+          isActive={activeView === 'local_model'}
+          onClick={() => onNavigate('local_model')}
         />
         <EnterpriseNavItem 
           icon={<Users className="w-4 h-4" />} 
           label={t('sidebar.userManagement')}
           sublabel="SSO / LDAP / OIDC"
+          licensed={!!eeStatus?.licensed}
+          isActive={activeView === 'sso'}
+          onClick={() => onNavigate('sso')}
         />
         <EnterpriseNavItem 
           icon={<ClipboardList className="w-4 h-4" />} 
           label={t('sidebar.auditLog')}
+          licensed={!!eeStatus?.licensed}
+          isActive={activeView === 'audit'}
+          onClick={() => onNavigate('audit')}
         />
         <EnterpriseNavItem 
           icon={<Layers className="w-4 h-4" />} 
           label={t('sidebar.multiModel')}
+          licensed={!!eeStatus?.licensed}
+          isActive={activeView === 'multi_model'}
+          onClick={() => onNavigate('multi_model')}
         />
         <EnterpriseNavItem 
           icon={<ShieldCheck className="w-4 h-4" />} 
           label={t('sidebar.policyEngine')}
+          licensed={!!eeStatus?.licensed}
+          isActive={activeView === 'policy'}
+          onClick={() => onNavigate('policy')}
         />
         <EnterpriseNavItem 
           icon={<Server className="w-4 h-4" />} 
           label={t('sidebar.hardwareAppliance')}
+          licensed={!!eeStatus?.licensed}
+          isActive={activeView === 'hardware'}
+          onClick={() => onNavigate('hardware')}
         />
       </div>
 
@@ -189,8 +210,40 @@ function NavItem({ icon, label, isActive, onClick }: { icon: React.ReactNode, la
   );
 }
 
-function EnterpriseNavItem({ icon, label, sublabel }: { icon: React.ReactNode, label: string, sublabel?: string }) {
+function EnterpriseNavItem({ 
+  icon, label, sublabel, licensed, isActive, onClick 
+}: { 
+  icon: React.ReactNode, 
+  label: string, 
+  sublabel?: string,
+  licensed: boolean,
+  isActive: boolean,
+  onClick?: () => void
+}) {
   const { t } = useI18n();
+
+  if (licensed) {
+    if (isActive) {
+      return (
+        <div 
+          className="flex items-center gap-3 bg-amber-500/10 text-amber-800 dark:text-amber-400 border border-amber-500/20 rounded px-4 py-2 cursor-pointer transition-all duration-200 font-semibold"
+          onClick={onClick}
+        >
+          <span className="text-amber-500">{icon}</span>
+          <span className="text-sm">{label}</span>
+        </div>
+      );
+    }
+    return (
+      <div 
+        className="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-amber-500/5 hover:text-amber-700 transition-all duration-200 cursor-pointer active:opacity-80 rounded"
+        onClick={onClick}
+      >
+        <span className="text-on-surface-variant/80">{icon}</span>
+        <span className="text-sm">{label}</span>
+      </div>
+    );
+  }
 
   return (
     <div 

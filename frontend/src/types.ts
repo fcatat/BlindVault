@@ -1,4 +1,7 @@
-export type ViewState = 'dashboard' | 'chat' | 'rules' | 'config';
+export type ViewState = 
+  | 'dashboard' | 'chat' | 'rules' | 'config' 
+  | 'local_model' | 'sso' | 'audit' | 'multi_model' | 'policy' | 'hardware';
+
 
 export interface AppState {
   activeView: ViewState;

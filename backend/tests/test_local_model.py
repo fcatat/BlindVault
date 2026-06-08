@@ -126,6 +126,77 @@ class TestExtractSecretsDegradation:
         )
         assert results == []
 
+    @pytest.mark.asyncio
+    @patch("httpx.AsyncClient.post")
+    async def test_api_protocols(self, mock_post):
+        """测试不同 API 协议的请求构造与返回解析。"""
+        # 1. 测试 custom_fastapi 协议 (传统 string 格式)
+        mock_response_fastapi = MagicMock()
+        mock_response_fastapi.status_code = 200
+        mock_response_fastapi.json.return_value = {
+            "output": '[{"value": "my_pwd_123", "type": "password", "label": "pwd"}]'
+        }
+
+        # 1b. 测试 custom_fastapi 协议 (LM Studio output 列表格式)
+        mock_response_fastapi_list = MagicMock()
+        mock_response_fastapi_list.status_code = 200
+        mock_response_fastapi_list.json.return_value = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": '[{"value": "my_pwd_123", "type": "password", "label": "pwd"}]'
+                }
+            ]
+        }
+        
+        # 2. 测试 openai 协议
+        mock_response_openai = MagicMock()
+        mock_response_openai.status_code = 200
+        mock_response_openai.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": '[{"value": "my_pwd_123", "type": "password", "label": "pwd"}]'
+                    }
+                }
+            ]
+        }
+
+        # 模拟 HTTP 调用
+        mock_post.side_effect = [
+            mock_response_fastapi,
+            mock_response_fastapi_list,
+            mock_response_openai
+        ]
+
+        # 运行 custom_fastapi 检测 (string)
+        res_fastapi = await extract_secrets(
+            "测试口令 my_pwd_123",
+            model_url="http://fake-api",
+            api_type="custom_fastapi",
+        )
+        assert len(res_fastapi) == 1
+        assert res_fastapi[0].value == "my_pwd_123"
+
+        # 运行 custom_fastapi 检测 (list of dict)
+        res_fastapi_list = await extract_secrets(
+            "测试口令 my_pwd_123",
+            model_url="http://fake-api",
+            api_type="custom_fastapi",
+        )
+        assert len(res_fastapi_list) == 1
+        assert res_fastapi_list[0].value == "my_pwd_123"
+
+        # 运行 openai 检测
+        res_openai = await extract_secrets(
+            "测试口令 my_pwd_123",
+            model_url="http://fake-api",
+            api_type="openai",
+        )
+        assert len(res_openai) == 1
+        assert res_openai[0].value == "my_pwd_123"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+

@@ -6,8 +6,11 @@ import { Dashboard } from './components/Dashboard';
 import { Chat } from './components/Chat';
 import { RulesConfig } from './components/RulesConfig';
 import { AgentConfig } from './components/AgentConfig';
+import { LocalModelConfig } from './components/LocalModelConfig';
+import { EnterprisePlaceholder } from './components/EnterprisePlaceholder';
 import { AddCredentialModal } from './components/AddCredentialModal';
 import { ViewState } from './types';
+import { checkEEStatus, type EEStatus } from './api';
 
 function generateSessionId(): string {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -25,6 +28,20 @@ export default function App() {
   const [activeView, setActiveView] = useState<ViewState>('chat');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [eeStatus, setEeStatus] = useState<EEStatus | null>(null);
+
+  // 加载企业版 License 状态
+  useEffect(() => {
+    async function loadEE() {
+      try {
+        const status = await checkEEStatus();
+        setEeStatus(status);
+      } catch (e) {
+        console.error('加载企业版 License 失败:', e);
+      }
+    }
+    loadEE();
+  }, []);
 
   // Session management
   const [sessions, setSessions] = useState<SessionInfo[]>(() => {
@@ -109,6 +126,7 @@ export default function App() {
         onSelectSession={setActiveSessionId}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
+        eeStatus={eeStatus}
       />
       
       <div className="flex-1 flex flex-col md:ml-64 relative bg-background h-screen overflow-hidden">
@@ -130,6 +148,14 @@ export default function App() {
           )}
           {activeView === 'rules' && <RulesConfig />}
           {activeView === 'config' && <AgentConfig />}
+
+          {/* 企业版独立路由页面 */}
+          {activeView === 'local_model' && <LocalModelConfig />}
+          {activeView === 'sso' && <EnterprisePlaceholder viewType="sso" />}
+          {activeView === 'audit' && <EnterprisePlaceholder viewType="audit" />}
+          {activeView === 'multi_model' && <EnterprisePlaceholder viewType="multi_model" />}
+          {activeView === 'policy' && <EnterprisePlaceholder viewType="policy" />}
+          {activeView === 'hardware' && <EnterprisePlaceholder viewType="hardware" />}
         </main>
       </div>
 

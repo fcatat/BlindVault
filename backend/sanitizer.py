@@ -236,6 +236,9 @@ async def detect_secrets(message: str, include_audit: bool = False) -> list[Sens
                 model_url=settings.local_model_url,
                 model_name=settings.local_model_name,
                 timeout=settings.local_model_timeout,
+                api_type=settings.local_model_api_type,
+                system_prompt=settings.local_model_prompt,
+                disable_cot=settings.local_model_disable_cot,
             )
 
             for det in model_results:

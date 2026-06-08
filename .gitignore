@@ -34,3 +34,10 @@ frontend/dist/
 # OS
 .DS_Store
 Thumbs.db
+
+# 本地开发 Docker Compose 覆盖配置
+docker-compose.override.yml
+
+# 诊断/草稿目录
+scratch/
+

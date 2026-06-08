@@ -150,6 +150,9 @@ export interface LLMConfig {
   local_model_url: string;
   local_model_name: string;
   local_model_timeout: number;
+  local_model_api_type: string;
+  local_model_prompt: string;
+  local_model_disable_cot: boolean;
 }
 
 export interface LLMConfigUpdate {
@@ -162,6 +165,9 @@ export interface LLMConfigUpdate {
   local_model_url?: string;
   local_model_name?: string;
   local_model_timeout?: number;
+  local_model_api_type?: string;
+  local_model_prompt?: string;
+  local_model_disable_cot?: boolean;
 }
 
 // ---- Config API ----
@@ -247,10 +253,42 @@ export interface LocalModelStatus {
   error: string;
 }
 
-export async function checkLocalModel(): Promise<LocalModelStatus> {
-  const res = await fetch(`${API_BASE}/config/local-model/check`, {
+export async function checkLocalModel(url?: string, apiType?: string, modelName?: string): Promise<LocalModelStatus> {
+  let endpoint = `${API_BASE}/config/local-model/check`;
+  const params = new URLSearchParams();
+  if (url) params.append('url', url);
+  if (apiType) params.append('api_type', apiType);
+  if (modelName) params.append('model_name', modelName);
+  if (params.toString()) {
+    endpoint += `?${params.toString()}`;
+  }
+
+  const res = await fetch(endpoint, {
     headers: DEFAULT_HEADERS,
   });
   if (!res.ok) throw new Error(`本地模型检测失败: ${res.status}`);
   return res.json();
 }
+
+// ---- 企业版许可状态 ----
+
+export interface EEStatus {
+  edition: string;
+  licensed: boolean;
+  features: string[];
+}
+
+export async function checkEEStatus(): Promise<EEStatus> {
+  try {
+    const res = await fetch(`${API_BASE}/ee/status`, {
+      headers: DEFAULT_HEADERS,
+    });
+    if (!res.ok) {
+      return { edition: 'community', licensed: false, features: [] };
+    }
+    return res.json();
+  } catch {
+    return { edition: 'community', licensed: false, features: [] };
+  }
+}
+

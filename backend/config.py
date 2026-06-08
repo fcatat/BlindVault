@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     local_model_url: str = ""         # Ollama 服务地址，如 http://mac-mini:11434（留空表示不启用）
     local_model_name: str = "qwen3:0.6b"  # 模型名称
     local_model_timeout: float = 2.0  # 推理超时（秒），超时自动降级为正则
+    local_model_api_type: str = "ollama"  # ollama | openai | custom_fastapi
+    local_model_prompt: str = ""      # 自定义 System Prompt，留空则采用内置默认
+    local_model_disable_cot: bool = True  # 是否强制禁用 CoT 思考链以提高实时性
+
 
     # ---- 应用 ----
     log_level: str = "INFO"

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Bot, Key, Lock, ShieldAlert, Send, CheckCircle2, 
-  XCircle, Wrench, Loader2, Terminal
+  XCircle, Wrench, Loader2, Terminal, Sparkles
 } from 'lucide-react';
 import { runAgent, listSecrets, type AgentRunResponse, type SecretMetadata } from '../api';
 import { useI18n } from '../i18n';
@@ -487,6 +487,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                             ? formatSecretExpiry(secretInfo.expires_at, secretInfo.status) 
                             : '';
                           const isInactive = secretInfo && (secretInfo.status !== 'active' || new Date(secretInfo.expires_at).getTime() < Date.now());
+                          const isModelExtracted = secretInfo && secretInfo.label.startsWith('model_');
                           
                           return (
                             <span 
@@ -494,12 +495,19 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                               className={`inline-flex items-center gap-1.5 px-2 py-1 border rounded text-[10px] font-mono transition-all duration-300 ${
                                 isInactive 
                                   ? 'bg-surface-container border-outline-variant text-outline/80' 
-                                  : 'bg-primary/5 border-primary/20 text-primary'
+                                  : isModelExtracted
+                                    ? 'bg-purple-500/10 border-purple-500/30 text-purple-700 dark:text-purple-400 font-semibold'
+                                    : 'bg-primary/5 border-primary/20 text-primary'
                               }`} 
-                              title={secretInfo ? `凭证标签: ${secretInfo.label}` : ''}
+                              title={secretInfo ? `凭证标签: ${secretInfo.label} (${isModelExtracted ? '本地大模型智能提取' : '系统正则自动提取'})` : ''}
                             >
                               <Lock className="w-3 h-3" />
                               {ref.substring(0, 12)}****
+                              {isModelExtracted && (
+                                <span className="text-[9px] px-1 rounded bg-purple-500/15 text-purple-700 dark:text-purple-400 scale-95 origin-left flex items-center gap-0.5">
+                                  <Sparkles className="w-2.5 h-2.5" /> AI 脱敏
+                                </span>
+                              )}
                               {expiryText && (
                                 <span className={`font-sans border-l pl-1.5 ml-0.5 ${
                                   isInactive 
@@ -595,6 +603,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
         messages={messages} 
         activeTraceMsgId={activeTraceMsgId} 
         setActiveTraceMsgId={setActiveTraceMsgId} 
+        secretsMap={secretsMap}
       />
     </div>
   );
@@ -607,11 +616,13 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
 function ToolLogsPanel({ 
   messages, 
   activeTraceMsgId,
-  setActiveTraceMsgId
+  setActiveTraceMsgId,
+  secretsMap
 }: { 
   messages: Message[]; 
   activeTraceMsgId: number | null;
   setActiveTraceMsgId: (id: number | null) => void;
+  secretsMap: Record<string, SecretMetadata>;
 }) {
   const { t } = useI18n();
 
@@ -689,6 +700,8 @@ function ToolLogsPanel({
           const isSuccess = !msg.text.toLowerCase().includes('error') && 
                             !msg.text.toLowerCase().includes('失败') && 
                             !msg.text.toLowerCase().includes('denied');
+          const secretInfo = secretsMap[secretRef];
+          const isModelExtracted = secretInfo && secretInfo.label.startsWith('model_');
 
           return (
             <div 
@@ -758,6 +771,12 @@ function ToolLogsPanel({
                       <h4 className="font-headline font-semibold text-on-surface">{t('trace.policyEvaluation')}</h4>
                       <p className="text-[9px] text-green-700/80 mt-0.5 leading-normal">
                         Domain/host verification passed. Reference <code className="bg-surface-container px-1 py-0.5 rounded font-mono font-bold text-primary">{secretRef.substring(0, 8)}</code> matches allowed target host: <code className="font-mono text-secondary">{host}</code>.
+                        {isModelExtracted && (
+                          <span className="block mt-1 font-sans text-[10px] text-purple-700 dark:text-purple-400 font-semibold flex items-center gap-1">
+                            <Sparkles className="w-3 h-3 text-purple-500" />
+                            🛡️ 企业版本地大模型已成功对该指令中的明文密码进行深度语义脱敏。
+                          </span>
+                        )}
                       </p>
                     </>
                   )}

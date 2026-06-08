@@ -179,7 +179,6 @@ def _create_openai_chatbot():
 
     from langchain_openai import ChatOpenAI
     from backend.tools.secure_shell import SECURE_SHELL_SCHEMA
-    from backend.tools.browser_login_mock import BROWSER_LOGIN_MOCK_SCHEMA
 
     llm_kwargs = {
         "model": settings.llm_model,
@@ -198,14 +197,6 @@ def _create_openai_chatbot():
                 "name": "secure_shell",
                 "description": "通用安全 Shell 执行器。命令中用 $SECRET 作为密码占位符，执行时自动替换为真实密码。支持 psql、ssh、curl、mysql、redis-cli 等任何命令。",
                 "parameters": SECURE_SHELL_SCHEMA,
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "browser_login_mock",
-                "description": "模拟浏览器登录（仅用于测试）。密码通过 secret_ref 传入。",
-                "parameters": BROWSER_LOGIN_MOCK_SCHEMA,
             },
         },
     ]

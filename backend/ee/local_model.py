@@ -70,35 +70,77 @@ async def extract_secrets(
     model_url: str,
     model_name: str = "qwen3:0.6b",
     timeout: float = 2.0,
+    api_type: str = "ollama",
+    system_prompt: str = "",
+    disable_cot: bool = True,
 ) -> list[DetectedSecret]:
-    """调用本地 Ollama 模型提取敏感信息。
+    """调用本地部署的模型服务提取敏感信息。
+
+    支持 Ollama、OpenAI 及自定义 FastAPI 的协议载荷转换。
 
     Args:
         text: 用户输入的原始消息
-        model_url: Ollama 服务地址（如 http://mac-mini:11434）
-        model_name: 模型名称（默认 qwen3:0.6b）
-        timeout: 推理超时时间（秒），超时则返回空列表
+        model_url: 本地大模型服务地址（如 http://localhost:11434）
+        model_name: 模型标识符（如 qwen3:0.6b）
+        timeout: 超时限制（秒）
+        api_type: 协议类型（"ollama" | "openai" | "custom_fastapi"）
+        system_prompt: 自定义 System Prompt
+        disable_cot: 是否强制禁用 CoT 思考链
 
     Returns:
-        识别到的敏感信息列表。如果模型不可用或推理失败，返回空列表。
+        识别到的敏感信息列表。
     """
     if not text or not text.strip():
         return []
 
-    api_url = f"{model_url.rstrip('/')}/api/chat"
+    # 1. 确定并增强 System Prompt（限制思考过程 CoT）
+    sys_prompt = system_prompt.strip() if system_prompt else _SYSTEM_PROMPT
+    if disable_cot:
+        cot_instructions = (
+            "\n\n[Constraint: You must output the JSON result directly. "
+            "DO NOT output any reasoning, thinking process, CoT, or <think> tags. Do not explain.]"
+            "\n[约束：你必须直接输出提取到的 JSON 结果。严禁输出任何思考过程、推导步骤或 <think> 标签。不作解释。]"
+        )
+        if "DO NOT output any reasoning" not in sys_prompt:
+            sys_prompt += cot_instructions
 
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": text},
-        ],
-        "stream": False,
-        "options": {
-            "temperature": 0.0,   # 确定性输出，不需要创造力
-            "num_predict": 512,   # 限制输出长度
-        },
-    }
+    # 2. 组装接口 URL 和请求 Payload
+    api_type = api_type.lower().strip()
+    payload = {}
+
+    if api_type == "openai":
+        api_url = f"{model_url.rstrip('/')}/v1/chat/completions"
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": text},
+            ],
+            "stream": False,
+            "temperature": 0.0,
+            "max_tokens": 512,
+        }
+    elif api_type == "custom_fastapi":
+        api_url = f"{model_url.rstrip('/')}/api/v1/chat"
+        payload = {
+            "model": model_name,
+            "system_prompt": sys_prompt,
+            "input": text,
+        }
+    else:  # 默认 ollama
+        api_url = f"{model_url.rstrip('/')}/api/chat"
+        payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": text},
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.0,   # 确定性输出
+                "num_predict": 512,   # 限制输出长度
+            },
+        }
 
     start_time = time.monotonic()
 
@@ -110,21 +152,35 @@ async def extract_secrets(
 
         if resp.status_code != 200:
             logger.warning(
-                "[EE] 本地模型响应异常: status=%d, elapsed=%.1fms",
-                resp.status_code, elapsed * 1000,
+                "[EE] 本地模型响应异常 (%s): status=%d, elapsed=%.1fms",
+                api_type, resp.status_code, elapsed * 1000,
             )
             return []
 
-        # 解析 Ollama 响应
+        # 3. 自适应解析各大模型的文本响应内容
         resp_data = resp.json()
-        content = resp_data.get("message", {}).get("content", "").strip()
+        content = ""
 
-        # 解析模型输出的 JSON
+        if api_type == "openai":
+            try:
+                content = resp_data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            except (IndexError, AttributeError):
+                content = ""
+        elif api_type == "custom_fastapi":
+            content = _extract_text_from_response(resp_data)
+        else:  # ollama
+            content = resp_data.get("message", {}).get("content", "").strip()
+
+        if not content and api_type != "custom_fastapi":
+            # 二次兜底探测
+            content = _extract_text_from_response(resp_data)
+
+        # 4. 严格校验与防幻觉过滤
         results = _parse_model_output(content, original_text=text)
 
         logger.info(
-            "[EE] 本地模型识别完成: found=%d, elapsed=%.0fms, model=%s",
-            len(results), elapsed * 1000, model_name,
+            "[EE] 本地模型识别完成: type=%s, found=%d, elapsed=%.0fms, model=%s",
+            api_type, len(results), elapsed * 1000, model_name,
         )
         return results
 
@@ -149,6 +205,37 @@ async def extract_secrets(
             str(e),
         )
         return []
+
+
+def _extract_text_from_response(resp_data: any) -> str:
+    """自适应从各推理接口返回的结构化 JSON 数据中寻找核心的 AI 文本响应字段。"""
+    if isinstance(resp_data, str):
+        return resp_data.strip()
+    if not isinstance(resp_data, dict):
+        return ""
+
+    # 1. 提取常用的直属文本 key
+    for key in ("response", "output", "message", "content", "reply", "result", "text"):
+        val = resp_data.get(key)
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, dict) and "content" in val:
+            return str(val.get("content")).strip()
+        if isinstance(val, list) and len(val) > 0:
+            first_val = val[0]
+            if isinstance(first_val, str):
+                return first_val.strip()
+            if isinstance(first_val, dict) and "content" in first_val:
+                return str(first_val.get("content")).strip()
+            if isinstance(first_val, dict) and "text" in first_val:
+                return str(first_val.get("text")).strip()
+
+    # 2. 备用查找：查找首个含有 JSON-String 格式的 string 字段
+    for k, v in resp_data.items():
+        if isinstance(v, str) and ("[" in v or "]" in v or "{" in v):
+            return v.strip()
+
+    return ""
 
 
 # ============================================================
@@ -247,23 +334,72 @@ def _parse_model_output(
 async def check_model_health(
     model_url: str,
     timeout: float = 2.0,
+    api_type: str = "ollama",
+    model_name: str = "qwen3:0.6b",
 ) -> dict:
     """检查本地模型服务是否可用。
+
+    根据 api_type 提供自适应连通探测。
 
     Returns:
         {"available": bool, "models": [...], "error": str}
     """
-    try:
-        api_url = f"{model_url.rstrip('/')}/api/tags"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(api_url)
+    api_type = api_type.lower().strip()
 
-        if resp.status_code == 200:
-            data = resp.json()
-            models = [m.get("name", "") for m in data.get("models", [])]
-            return {"available": True, "models": models, "error": ""}
-        else:
-            return {"available": False, "models": [], "error": f"HTTP {resp.status_code}"}
+    # 1. Ollama 原生活性检查
+    if api_type == "ollama":
+        try:
+            api_url = f"{model_url.rstrip('/')}/api/tags"
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(api_url)
 
-    except Exception as e:
-        return {"available": False, "models": [], "error": str(e)}
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except Exception:
+                    return {"available": False, "models": [], "error": "返回格式错误：非 JSON 响应"}
+                
+                if isinstance(data, dict) and "models" in data:
+                    models = [m.get("name", "") for m in data.get("models", [])]
+                    return {"available": True, "models": models, "error": ""}
+                else:
+                    return {"available": False, "models": [], "error": "返回格式错误：未找到 models 列表，这可能不是真正的 Ollama 服务"}
+            else:
+                return {"available": False, "models": [], "error": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"available": False, "models": [], "error": str(e)}
+
+    # 2. OpenAI 协议活性检查
+    elif api_type == "openai":
+        try:
+            api_url = f"{model_url.rstrip('/')}/v1/models"
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(api_url)
+            # 只要响应在 200 或是 401 范围，均能判定服务端点正常，而不是 DNS 劫持或中间代理拦截
+            if resp.status_code in (200, 401):
+                return {"available": True, "models": [], "error": ""}
+            else:
+                return {"available": False, "models": [], "error": f"HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"available": False, "models": [], "error": f"连接 OpenAI 接口失败: {str(e)}"}
+
+    # 3. 自定义 FastAPI 活性检查（向 /api/v1/chat 发送轻量级测试 POST Payload）
+    elif api_type == "custom_fastapi":
+        try:
+            api_url = f"{model_url.rstrip('/')}/api/v1/chat"
+            payload = {
+                "model": model_name,
+                "system_prompt": "ping",
+                "input": "ping"
+            }
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(api_url, json=payload)
+            # 只要收到来自该具体端点的响应 (即便返回 400 校验错误或 422)，也能断定接口后端是活跃运转的
+            if resp.status_code in (200, 400, 422):
+                return {"available": True, "models": [], "error": ""}
+            else:
+                return {"available": False, "models": [], "error": f"接口异常 HTTP {resp.status_code}"}
+        except Exception as e:
+            return {"available": False, "models": [], "error": f"连接自定义 FastAPI 接口失败: {str(e)}"}
+
+    return {"available": False, "models": [], "error": "未知的 API 协议类型"}

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from backend.config import get_settings
 from backend.db import save_llm_config
 from backend.agent.graph import SYSTEM_PROMPT
+from backend.ee.local_model import _SYSTEM_PROMPT as DEFAULT_LOCAL_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ class LLMConfigResponse(BaseModel):
     local_model_url: str = ""
     local_model_name: str = "qwen3:0.6b"
     local_model_timeout: float = 2.0
+    local_model_api_type: str = "ollama"
+    local_model_prompt: str = ""
+    local_model_disable_cot: bool = True
 
 
 class LLMConfigUpdate(BaseModel):
@@ -50,6 +54,9 @@ class LLMConfigUpdate(BaseModel):
     local_model_url: str | None = None      # None = 不更新
     local_model_name: str | None = None
     local_model_timeout: float | None = None
+    local_model_api_type: str | None = None
+    local_model_prompt: str | None = None
+    local_model_disable_cot: bool | None = None
 
 
 @router.get("", response_model=LLMConfigResponse)
@@ -66,6 +73,9 @@ async def get_config():
         local_model_url=settings.local_model_url,
         local_model_name=settings.local_model_name,
         local_model_timeout=settings.local_model_timeout,
+        local_model_api_type=settings.local_model_api_type,
+        local_model_prompt=settings.local_model_prompt or DEFAULT_LOCAL_PROMPT,
+        local_model_disable_cot=settings.local_model_disable_cot,
     )
 
 
@@ -96,6 +106,12 @@ async def update_config(payload: LLMConfigUpdate):
         settings.local_model_name = payload.local_model_name.strip()
     if payload.local_model_timeout is not None:
         settings.local_model_timeout = payload.local_model_timeout
+    if payload.local_model_api_type is not None:
+        settings.local_model_api_type = payload.local_model_api_type.strip()
+    if payload.local_model_prompt is not None:
+        settings.local_model_prompt = payload.local_model_prompt.strip()
+    if payload.local_model_disable_cot is not None:
+        settings.local_model_disable_cot = payload.local_model_disable_cot
 
     # 持久化到 PostgreSQL
     try:
@@ -106,6 +122,12 @@ async def update_config(payload: LLMConfigUpdate):
             api_key=payload.llm_api_key,  # 空串不会覆盖已有 key
             encryption_key=settings.encryption_key_bytes,
             safety_policy_mode=settings.safety_policy_mode,
+            local_model_url=settings.local_model_url,
+            local_model_name=settings.local_model_name,
+            local_model_timeout=settings.local_model_timeout,
+            local_model_api_type=settings.local_model_api_type,
+            local_model_prompt=settings.local_model_prompt or DEFAULT_LOCAL_PROMPT,
+            local_model_disable_cot=settings.local_model_disable_cot,
         )
     except Exception:
         logger.exception("配置持久化失败，但内存中已更新")
@@ -129,6 +151,9 @@ async def update_config(payload: LLMConfigUpdate):
         local_model_url=settings.local_model_url,
         local_model_name=settings.local_model_name,
         local_model_timeout=settings.local_model_timeout,
+        local_model_api_type=settings.local_model_api_type,
+        local_model_prompt=settings.local_model_prompt or DEFAULT_LOCAL_PROMPT,
+        local_model_disable_cot=settings.local_model_disable_cot,
     )
 
 
@@ -472,11 +497,19 @@ class LocalModelStatusResponse(BaseModel):
 
 
 @router.get("/local-model/check", response_model=LocalModelStatusResponse)
-async def check_local_model():
+async def check_local_model(
+    url: str | None = None,
+    api_type: str | None = None,
+    model_name: str | None = None,
+):
     """检测本地模型服务是否在线，返回可用模型列表。"""
     settings = get_settings()
 
-    if not settings.local_model_url:
+    target_url = url.strip() if url else settings.local_model_url
+    target_api_type = api_type.strip() if api_type else settings.local_model_api_type
+    target_model_name = model_name.strip() if model_name else settings.local_model_name
+
+    if not target_url:
         return LocalModelStatusResponse(
             available=False,
             error="未配置本地模型地址 (LOCAL_MODEL_URL)"
@@ -485,8 +518,10 @@ async def check_local_model():
     try:
         from backend.ee.local_model import check_model_health
         result = await check_model_health(
-            model_url=settings.local_model_url,
+            model_url=target_url,
             timeout=settings.local_model_timeout,
+            api_type=target_api_type,
+            model_name=target_model_name,
         )
         return LocalModelStatusResponse(**result)
     except Exception as e:

@@ -65,7 +65,7 @@ async def agent_run(
         )
 
     # ---- 安全防护策略检测 (严格模式阻断) ----
-    leaked = detect_leaked_secrets(req.user_message)
+    leaked = detect_leaked_secrets(sanitized_message)
     if leaked is not None and get_settings().safety_policy_mode == "strict":
         raise HTTPException(
             status_code=400,

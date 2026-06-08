@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
         persisted = await load_llm_config(settings.encryption_key_bytes)
         if persisted:
             for key, val in persisted.items():
-                if val:  # 只覆盖非空值
+                if val is not None and val != "":
                     setattr(settings, key, val)
             logger.info(
                 "已从 PostgreSQL 加载持久化配置: provider=%s, model=%s, has_key=%s",
@@ -143,6 +143,14 @@ from backend.api.config import router as config_router
 app.include_router(secrets_router)
 app.include_router(agent_router)
 app.include_router(config_router)
+
+
+@app.get("/api/ee/status", tags=["system"])
+async def get_ee_status():
+    """获取企业版激活状态。"""
+    from backend.ee import get_ee_license_info
+    return get_ee_license_info()
+
 
 
 # ---- 健康检查 ----
