@@ -1,0 +1,26 @@
+BlindVault Enterprise Edition License Agreement
+
+Copyright (c) 2026 BlindVault Authors. All rights reserved.
+
+The software contained in the "ee/" directories of this repository
+("Enterprise Software") is proprietary and confidential. It is provided
+under a separate commercial license agreement.
+
+TERMS:
+
+1. The Enterprise Software may only be used by organizations that have
+   purchased a valid BlindVault Enterprise License from the licensor.
+
+2. Redistribution, modification, reverse engineering, or sublicensing
+   of the Enterprise Software is strictly prohibited without prior
+   written consent from the licensor.
+
+3. The Enterprise Software is provided "AS IS" without warranty of any
+   kind. The licensor shall not be liable for any damages arising from
+   the use of this software.
+
+4. This license does not apply to the community edition code located
+   outside the "ee/" directories, which is governed by its own open
+   source license (see /LICENSE in the repository root).
+
+For licensing inquiries, contact: sales@blindvault.dev

@@ -1,0 +1,70 @@
+# ============================================================
+# BlindVault EE → Community 自动同步流水线
+#
+# 当企业版私有仓库的 main 分支有新的 push 时，
+# 自动剥离所有 ee/ 目录中的企业版代码，
+# 然后将纯社区版代码推送到公开的 GitHub 仓库。
+#
+# 注意：此 Workflow 仅在企业版私有仓库 (BlindVault-ee) 中运行。
+# 公开仓库 (BlindVault) 不需要此文件。
+# ============================================================
+
+name: Sync to Community Edition
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # 支持手动触发
+
+jobs:
+  sync-community:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout EE repo (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 保留完整 Git 历史
+
+      - name: Remove Enterprise-only code
+        run: |
+          echo "🔒 正在剥离企业版专属代码..."
+          
+          # 删除后端企业版模块
+          rm -rf backend/ee/
+          
+          # 删除前端企业版模块
+          rm -rf frontend/src/ee/
+          
+          # 删除企业版专属的 Docker 和编排文件
+          rm -f ee.Dockerfile docker-compose.ee.yml
+          
+          # 删除此同步 Workflow 本身（社区版不需要）
+          rm -f .github/workflows/sync-community.yml
+          
+          echo "✅ 企业版代码已剥离"
+          echo ""
+          echo "📁 剥离后的目录结构:"
+          find . -not -path './.git/*' -not -path './.git' -type f | head -50
+
+      - name: Push to Community repo
+        env:
+          # 需要在企业版仓库的 Settings > Secrets 中配置：
+          # COMMUNITY_REPO_TOKEN: 拥有公开仓库 push 权限的 GitHub PAT
+          COMMUNITY_REPO_TOKEN: ${{ secrets.COMMUNITY_REPO_TOKEN }}
+        run: |
+          # 配置 Git 身份
+          git config user.name "BlindVault Bot"
+          git config user.email "bot@blindvault.dev"
+          
+          # 提交剥离后的更改（作为一个临时 commit）
+          git add -A
+          git diff --cached --quiet && echo "没有需要同步的变更" && exit 0
+          git commit -m "chore: sync from enterprise edition (auto-generated)"
+          
+          # 添加社区版公开仓库作为远程
+          git remote add community https://x-access-token:${COMMUNITY_REPO_TOKEN}@github.com/fcatat/BlindVault.git
+          
+          # 强制推送到社区版仓库（覆盖式同步）
+          git push community main --force
+          
+          echo "🚀 社区版仓库已同步完成"
