@@ -65,7 +65,7 @@ _DANGEROUS_PATTERNS = [
 
 _COMPILED_DANGEROUS = [re.compile(p, re.IGNORECASE) for p in _DANGEROUS_PATTERNS]
 
-EXECUTION_TIMEOUT = 30  # 秒
+EXECUTION_TIMEOUT = 35  # 秒
 
 
 def _is_dangerous(command: str) -> str | None:
