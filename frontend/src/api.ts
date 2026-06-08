@@ -146,6 +146,10 @@ export interface LLMConfig {
   has_api_key: boolean;
   safety_policy_mode: string;
   system_prompt: string;
+  // 企业版：本地模型网关
+  local_model_url: string;
+  local_model_name: string;
+  local_model_timeout: number;
 }
 
 export interface LLMConfigUpdate {
@@ -154,6 +158,10 @@ export interface LLMConfigUpdate {
   llm_base_url: string;
   llm_api_key: string;
   safety_policy_mode: string;
+  // 企业版：本地模型网关
+  local_model_url?: string;
+  local_model_name?: string;
+  local_model_timeout?: number;
 }
 
 // ---- Config API ----
@@ -228,5 +236,21 @@ export async function upgradeSandbox(): Promise<SandboxStatus> {
   if (!res.ok) {
     await throwError(res);
   }
+  return res.json();
+}
+
+// ---- 企业版：本地模型网关 ----
+
+export interface LocalModelStatus {
+  available: boolean;
+  models: string[];
+  error: string;
+}
+
+export async function checkLocalModel(): Promise<LocalModelStatus> {
+  const res = await fetch(`${API_BASE}/config/local-model/check`, {
+    headers: DEFAULT_HEADERS,
+  });
+  if (!res.ok) throw new Error(`本地模型检测失败: ${res.status}`);
   return res.json();
 }

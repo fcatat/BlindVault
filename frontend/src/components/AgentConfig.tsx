@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Bot, Server, Key, Eye, EyeOff, Save, CheckCircle2, AlertTriangle, 
-  Loader2, Radio, Cpu, Globe, ShieldCheck, Zap, Info, Terminal, RefreshCw, Check
+  Loader2, Radio, Cpu, Globe, ShieldCheck, Zap, Info, Terminal, RefreshCw, Check, BrainCircuit, Clock
 } from 'lucide-react';
-import { getConfig, updateConfig, getSandboxStatus, upgradeSandbox, checkLlmConnection, type LLMConfig, type SandboxStatus } from '../api';
+import { getConfig, updateConfig, getSandboxStatus, upgradeSandbox, checkLlmConnection, checkLocalModel, type LLMConfig, type SandboxStatus, type LocalModelStatus } from '../api';
 import { useI18n } from '../i18n';
 
 export function AgentConfig() {
@@ -63,6 +63,13 @@ export function AgentConfig() {
   const [safetyPolicyMode, setSafetyPolicyMode] = useState('lax');
   const [showPrompt, setShowPrompt] = useState(false);
 
+  // 企业版：本地模型网关状态
+  const [localModelUrl, setLocalModelUrl] = useState('');
+  const [localModelName, setLocalModelName] = useState('qwen3:0.6b');
+  const [localModelTimeout, setLocalModelTimeout] = useState(2.0);
+  const [localModelStatus, setLocalModelStatus] = useState<LocalModelStatus | null>(null);
+  const [localModelChecking, setLocalModelChecking] = useState(false);
+
   useEffect(() => {
     fetchConfig();
     fetchSandbox();
@@ -90,6 +97,9 @@ export function AgentConfig() {
       setBaseUrl(cfg.llm_base_url);
       setSafetyPolicyMode(cfg.safety_policy_mode || 'lax');
       setApiKey(''); // API Key 不回传
+      setLocalModelUrl(cfg.local_model_url || '');
+      setLocalModelName(cfg.local_model_name || 'qwen3:0.6b');
+      setLocalModelTimeout(cfg.local_model_timeout || 2.0);
       validateLlmConnection(cfg.llm_provider, cfg.has_api_key);
 
     } catch (e: any) {
@@ -138,6 +148,9 @@ export function AgentConfig() {
         llm_base_url: baseUrl.trim(),
         llm_api_key: apiKey, // 空串 = 不更新
         safety_policy_mode: safetyPolicyMode,
+        local_model_url: localModelUrl.trim(),
+        local_model_name: localModelName.trim(),
+        local_model_timeout: localModelTimeout,
       });
       setConfig(result);
       setApiKey('');
@@ -448,6 +461,129 @@ export function AgentConfig() {
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
           {saving ? t('config.saving') : t('config.saveBtn')}
         </button>
+      </div>
+
+      {/* ====== Enterprise: Local Model Gateway ====== */}
+      <div className="mt-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300 border border-amber-500/20">
+        <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <BrainCircuit className="w-4 h-4 text-amber-500" />
+            <span className="text-sm font-semibold text-on-surface">{t('config.localModelTitle')}</span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 border border-amber-500/30">
+              {t('config.localModelEEBadge')}
+            </span>
+          </div>
+          {localModelChecking ? (
+            <Loader2 className="w-3.5 h-3.5 text-amber-500 animate-spin" />
+          ) : localModelStatus ? (
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${localModelStatus.available ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`}></span>
+              <span className="text-xs font-semibold text-on-surface-variant">
+                {localModelStatus.available ? t('config.localModelOnline') : (localModelUrl ? t('config.localModelOffline') : t('config.localModelNotConfigured'))}
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs text-on-surface-variant/50">{localModelUrl ? '—' : t('config.localModelNotConfigured')}</span>
+          )}
+        </div>
+
+        <div className="p-6 space-y-6">
+          <p className="text-xs text-on-surface-variant leading-relaxed">
+            {t('config.localModelDesc')}
+          </p>
+
+          {/* Model URL */}
+          <div className="space-y-2">
+            <label className="block text-sm font-label text-on-surface-variant font-medium">{t('config.localModelUrl')}</label>
+            <div className="relative bg-surface-container border border-outline-variant focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all rounded-lg flex items-center px-4 py-3">
+              <Globe className="text-on-surface-variant mr-3 w-5 h-5 opacity-70 shrink-0" />
+              <input
+                type="text"
+                value={localModelUrl}
+                onChange={(e) => setLocalModelUrl(e.target.value)}
+                className="w-full bg-transparent border-none text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-0 p-0 font-mono"
+                placeholder={t('config.localModelUrlPlaceholder')}
+              />
+            </div>
+            <p className="text-xs text-on-surface-variant">{t('config.localModelUrlHint')}</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Model Name */}
+            <div className="space-y-2">
+              <label className="block text-sm font-label text-on-surface-variant font-medium">{t('config.localModelName')}</label>
+              <div className="relative bg-surface-container border border-outline-variant focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all rounded-lg flex items-center px-4 py-3">
+                <Cpu className="text-on-surface-variant mr-3 w-5 h-5 opacity-70 shrink-0" />
+                <input
+                  type="text"
+                  value={localModelName}
+                  onChange={(e) => setLocalModelName(e.target.value)}
+                  className="w-full bg-transparent border-none text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-0 p-0 font-mono"
+                  placeholder="qwen3:0.6b"
+                />
+              </div>
+              <p className="text-xs text-on-surface-variant">{t('config.localModelNameHint')}</p>
+            </div>
+
+            {/* Timeout */}
+            <div className="space-y-2">
+              <label className="block text-sm font-label text-on-surface-variant font-medium">{t('config.localModelTimeout')}</label>
+              <div className="relative bg-surface-container border border-outline-variant focus-within:border-amber-500 focus-within:ring-1 focus-within:ring-amber-500 transition-all rounded-lg flex items-center px-4 py-3">
+                <Clock className="text-on-surface-variant mr-3 w-5 h-5 opacity-70 shrink-0" />
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="10"
+                  value={localModelTimeout}
+                  onChange={(e) => setLocalModelTimeout(parseFloat(e.target.value) || 2.0)}
+                  className="w-full bg-transparent border-none text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-0 p-0 font-mono"
+                />
+              </div>
+              <p className="text-xs text-on-surface-variant">{t('config.localModelTimeoutHint')}</p>
+            </div>
+          </div>
+
+          {/* Test Connection + Available Models */}
+          <div className="flex items-center gap-4">
+            <button
+              onClick={async () => {
+                setLocalModelChecking(true);
+                try {
+                  const res = await checkLocalModel();
+                  setLocalModelStatus(res);
+                } catch {
+                  setLocalModelStatus({ available: false, models: [], error: 'Request failed' });
+                } finally {
+                  setLocalModelChecking(false);
+                }
+              }}
+              disabled={localModelChecking || !localModelUrl.trim()}
+              className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-600 border border-amber-500/30 hover:bg-amber-500/20 disabled:opacity-40 disabled:pointer-events-none transition-all flex items-center gap-1.5"
+            >
+              {localModelChecking ? (
+                <><Loader2 className="w-3 h-3 animate-spin" /> {t('config.localModelChecking')}</>
+              ) : (
+                <><RefreshCw className="w-3 h-3" /> {t('config.localModelCheck')}</>
+              )}
+            </button>
+
+            {localModelStatus?.available && localModelStatus.models.length > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-on-surface-variant font-medium">{t('config.localModelAvailableModels')}:</span>
+                {localModelStatus.models.map((m) => (
+                  <span key={m} className="text-[10px] font-mono font-medium px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                    {m}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {localModelStatus && !localModelStatus.available && localModelStatus.error && (
+              <span className="text-xs text-red-500">{localModelStatus.error}</span>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Diagnostics Sandbox Section */}

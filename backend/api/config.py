@@ -33,6 +33,10 @@ class LLMConfigResponse(BaseModel):
     has_api_key: bool  # 只告知是否已配置，不返回明文
     safety_policy_mode: str
     system_prompt: str
+    # 企业版：本地模型网关
+    local_model_url: str = ""
+    local_model_name: str = "qwen3:0.6b"
+    local_model_timeout: float = 2.0
 
 
 class LLMConfigUpdate(BaseModel):
@@ -42,6 +46,10 @@ class LLMConfigUpdate(BaseModel):
     llm_base_url: str = ""
     llm_api_key: str = ""  # 空串 = 不更新
     safety_policy_mode: str = "lax"
+    # 企业版：本地模型网关
+    local_model_url: str | None = None      # None = 不更新
+    local_model_name: str | None = None
+    local_model_timeout: float | None = None
 
 
 @router.get("", response_model=LLMConfigResponse)
@@ -55,6 +63,9 @@ async def get_config():
         has_api_key=bool(settings.llm_api_key),
         safety_policy_mode=settings.safety_policy_mode,
         system_prompt=SYSTEM_PROMPT,
+        local_model_url=settings.local_model_url,
+        local_model_name=settings.local_model_name,
+        local_model_timeout=settings.local_model_timeout,
     )
 
 
@@ -77,6 +88,14 @@ async def update_config(payload: LLMConfigUpdate):
 
     if payload.llm_api_key:
         settings.llm_api_key = payload.llm_api_key
+
+    # 企业版：本地模型网关配置更新
+    if payload.local_model_url is not None:
+        settings.local_model_url = payload.local_model_url.strip()
+    if payload.local_model_name is not None:
+        settings.local_model_name = payload.local_model_name.strip()
+    if payload.local_model_timeout is not None:
+        settings.local_model_timeout = payload.local_model_timeout
 
     # 持久化到 PostgreSQL
     try:
@@ -107,6 +126,9 @@ async def update_config(payload: LLMConfigUpdate):
         has_api_key=bool(settings.llm_api_key),
         safety_policy_mode=settings.safety_policy_mode,
         system_prompt=SYSTEM_PROMPT,
+        local_model_url=settings.local_model_url,
+        local_model_name=settings.local_model_name,
+        local_model_timeout=settings.local_model_timeout,
     )
 
 
@@ -435,5 +457,42 @@ async def upgrade_sandbox():
         raise HTTPException(
             status_code=503,
             detail=f"无法连接到沙箱服务完成升级: {str(e)}"
+        )
+
+
+# ------------------------------------------------------------
+# 企业版：本地模型网关 API
+# ------------------------------------------------------------
+
+class LocalModelStatusResponse(BaseModel):
+    """本地模型网关健康检查响应。"""
+    available: bool
+    models: list[str] = []
+    error: str = ""
+
+
+@router.get("/local-model/check", response_model=LocalModelStatusResponse)
+async def check_local_model():
+    """检测本地模型服务是否在线，返回可用模型列表。"""
+    settings = get_settings()
+
+    if not settings.local_model_url:
+        return LocalModelStatusResponse(
+            available=False,
+            error="未配置本地模型地址 (LOCAL_MODEL_URL)"
+        )
+
+    try:
+        from backend.ee.local_model import check_model_health
+        result = await check_model_health(
+            model_url=settings.local_model_url,
+            timeout=settings.local_model_timeout,
+        )
+        return LocalModelStatusResponse(**result)
+    except Exception as e:
+        logger.warning("本地模型健康检查异常: %s", str(e))
+        return LocalModelStatusResponse(
+            available=False,
+            error=str(e)
         )
 

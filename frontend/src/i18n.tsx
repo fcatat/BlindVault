@@ -115,6 +115,24 @@ const translations = {
     'config.promptShow': '展开系统 Prompt 详情',
     'config.promptHide': '收起系统 Prompt 详情',
 
+    // 企业版：本地模型网关
+    'config.localModelTitle': '本地模型网关',
+    'config.localModelDesc': '连接本地部署的小型语言模型（如 Mac Mini + Ollama），对用户输入进行语义级敏感信息识别。作为正则脱敏的智能增强层，模型不可用时自动降级为正则模式。',
+    'config.localModelUrl': '模型服务地址',
+    'config.localModelUrlPlaceholder': 'http://mac-mini:11434',
+    'config.localModelUrlHint': 'Ollama 服务的 HTTP 地址。留空则不启用本地模型智能脱敏。',
+    'config.localModelName': '模型名称',
+    'config.localModelNameHint': 'Ollama 中已拉取的模型标识符',
+    'config.localModelTimeout': '推理超时 (秒)',
+    'config.localModelTimeoutHint': '超过此时间未返回结果则自动降级为正则脱敏',
+    'config.localModelCheck': '检测连通性',
+    'config.localModelChecking': '检测中...',
+    'config.localModelOnline': '模型在线',
+    'config.localModelOffline': '模型离线',
+    'config.localModelNotConfigured': '未配置',
+    'config.localModelAvailableModels': '可用模型',
+    'config.localModelEEBadge': 'Enterprise',
+
 
     // Dashboard
     'dashboard.title': '凭证库',
@@ -361,6 +379,24 @@ const translations = {
     'config.promptPreviewDesc': 'This panel displays the core system prompt rules for security enforcement and tool routing. To prevent prompt jailbreaking or utility degradation, the community edition only provides read-only audit access.',
     'config.promptShow': 'Expand System Prompt Details',
     'config.promptHide': 'Collapse System Prompt Details',
+
+    // Enterprise: Local Model Gateway
+    'config.localModelTitle': 'Local Model Gateway',
+    'config.localModelDesc': 'Connect a locally deployed small language model (e.g. Mac Mini + Ollama) for semantic-level sensitive data detection. Enhances regex sanitization with AI intelligence. Automatically falls back to regex when model is unavailable.',
+    'config.localModelUrl': 'Model Service URL',
+    'config.localModelUrlPlaceholder': 'http://mac-mini:11434',
+    'config.localModelUrlHint': 'HTTP address of the Ollama service. Leave empty to disable local model sanitization.',
+    'config.localModelName': 'Model Name',
+    'config.localModelNameHint': 'Model identifier available in Ollama',
+    'config.localModelTimeout': 'Inference Timeout (s)',
+    'config.localModelTimeoutHint': 'Falls back to regex if inference exceeds this duration',
+    'config.localModelCheck': 'Test Connection',
+    'config.localModelChecking': 'Checking...',
+    'config.localModelOnline': 'Model Online',
+    'config.localModelOffline': 'Model Offline',
+    'config.localModelNotConfigured': 'Not Configured',
+    'config.localModelAvailableModels': 'Available Models',
+    'config.localModelEEBadge': 'Enterprise',
 
 
     // Dashboard
