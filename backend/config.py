@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     # ---- 诊断沙箱 ----
     sandbox_url: str = "http://sandbox:8001"
 
+    # ---- 企业版：本地模型网关 ----
+    local_model_url: str = ""         # Ollama 服务地址，如 http://mac-mini:11434（留空表示不启用）
+    local_model_name: str = "qwen3:0.6b"  # 模型名称
+    local_model_timeout: float = 2.0  # 推理超时（秒），超时自动降级为正则
+
     # ---- 应用 ----
     log_level: str = "INFO"
     allowed_origins: str = "http://localhost:3000"

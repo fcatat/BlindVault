@@ -223,6 +223,49 @@ async def detect_secrets(message: str, include_audit: bool = False) -> list[Sens
             value_end=m.end(2),
         ))
 
+    # ================================================================
+    # 第二层：本地模型语义识别（企业版）
+    # ================================================================
+    settings = get_settings()
+    if settings.local_model_url:
+        try:
+            from backend.ee.local_model import extract_secrets as model_extract
+
+            model_results = await model_extract(
+                text=message,
+                model_url=settings.local_model_url,
+                model_name=settings.local_model_name,
+                timeout=settings.local_model_timeout,
+            )
+
+            for det in model_results:
+                if det.value in seen_values:
+                    continue  # 正则已捕获，跳过
+                seen_values.add(det.value)
+
+                # 定位 value 在原始消息中的位置
+                idx = message.find(det.value)
+                if idx == -1:
+                    continue  # 防御性检查
+
+                matches.append(SensitiveMatch(
+                    secret_type=det.secret_type,
+                    label=f"model_{det.secret_type}",
+                    value=det.value,
+                    start=idx,
+                    end=idx + len(det.value),
+                    full_match=det.value,
+                    value_start=idx,
+                    value_end=idx + len(det.value),
+                ))
+                logger.info(
+                    "[EE] 本地模型补充识别: type=%s, value=%s",
+                    det.secret_type, det.value[:4] + "****",
+                )
+
+        except Exception as e:
+            logger.warning("[EE] 本地模型识别异常，降级为仅正则: %s", str(e))
+
     # 从后向前排序，替换时不影响前面的偏移
     matches.sort(key=lambda x: x.value_start, reverse=True)
     return matches
