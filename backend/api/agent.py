@@ -16,7 +16,7 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 
 from backend.agent.graph import run_agent
-from backend.models import AgentRunRequest, AgentRunResponse, RunPlanStepRequest, RunPlanStepResponse, ExecutionContext
+from backend.models import AgentRunRequest, AgentRunResponse, RunPlanStepRequest, RunPlanStepResponse, ExecutionContext, HealPlanStepRequest, HealPlanStepResponse
 from backend.redis_store import get_store
 from backend.sanitizer import sanitize_message, detect_leaked_secrets
 from backend.config import get_settings
@@ -130,3 +130,103 @@ async def agent_run_plan_step(
         stderr=res.get("stderr", "") or res.get("reason", ""),
         status=res.get("status", "error"),
     )
+
+
+@router.post("/heal_plan_step", response_model=HealPlanStepResponse)
+async def agent_heal_plan_step(
+    req: HealPlanStepRequest,
+    x_user_id: str = Header(..., alias="X-User-Id"),
+    x_tenant_id: str = Header("default", alias="X-Tenant-Id"),
+):
+    """
+    智能单步自愈：分析失败的命令与报错日志，并生成修正后的命令。
+    """
+    import re
+    settings = get_settings()
+    use_mock = settings.llm_provider == "mock"
+
+    if use_mock:
+        # 1. 模拟网络与权限故障自愈（例如 SSH 代理连接失败退化为本地执行）
+        suggested = req.command
+        analysis = "分析：命令在连接远程主机 10.14.101.22 时因网络不可达或超时而失败。自愈建议：直接在本地隔离沙箱中执行相同的核心指令，剔除 SSH 代理。"
+
+        # 匹配 sshpass ... root@10.14.101.22 "cmd" 结构
+        ssh_match = re.search(r'sshpass\s+.*?ssh\s+.*?\s+root@10\.14\.101\.22\s+"(.*?)"', req.command)
+        if ssh_match:
+            suggested = ssh_match.group(1)
+        else:
+            # 兼容单引号
+            ssh_match_single = re.search(r"sshpass\s+.*?ssh\s+.*?\s+root@10\.14\.101\.22\s+'(.*?)'", req.command)
+            if ssh_match_single:
+                suggested = ssh_match_single.group(1)
+            else:
+                # 再次兼容不带 sshpass 的普通 ssh 代理
+                ssh_match_simple = re.search(r'ssh\s+.*?\s+root@10\.14\.101\.22\s+"(.*?)"', req.command)
+                if ssh_match_simple:
+                    suggested = ssh_match_simple.group(1)
+                elif "ssh" in req.command and "10.14.101.22" in req.command:
+                    # 如果命令包含 ssh 和该 IP，但正则没配对，我们直接提供本地化 nginx 测试命令作为降级
+                    if "pull" in req.command:
+                        suggested = "docker pull nginx:alpine"
+                    elif "run" in req.command:
+                        suggested = "docker run -d -p 8888:80 --name nginx-test nginx:alpine"
+                    else:
+                        suggested = "docker images"
+
+        return HealPlanStepResponse(
+            suggested_command=suggested,
+            analysis=analysis,
+        )
+
+    # 2. 真实大模型调用分支
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.prompts import ChatPromptTemplate
+        import json
+
+        llm = ChatOpenAI(
+            model=settings.llm_model,
+            openai_api_key=settings.llm_api_key,
+            openai_api_base=settings.llm_base_url or None,
+            temperature=0.1,
+        )
+
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", (
+                "You are an expert DevOps engineer and self-healing agent.\n"
+                "The user will provide a command that failed in a Linux sandbox, along with the stderr/error log.\n"
+                "Your task is to analyze the error, find the root cause, and provide a corrected command that can run successfully in the same environment.\n\n"
+                "You MUST output a valid JSON object containing exactly two fields:\n"
+                "1. 'suggested_command': The corrected single-line command (do not include markdown block, output only the raw string).\n"
+                "2. 'analysis': A concise Chinese explanation of what went wrong and how you fixed it.\n\n"
+                "Format requirement: JSON output only. Example:\n"
+                "{{\n"
+                "  \"suggested_command\": \"docker run -d -p 8080:80 nginx\",\n"
+                "  \"analysis\": \"检测到80端口冲突，已将宿主机映射端口更改为8080进行重试。\"\n"
+                "}}"
+            )),
+            ("user", "Failed Command: {command}\nError Output: {stderr}")
+        ])
+
+        chain = prompt | llm
+        resp = await chain.ainvoke({"command": req.command, "stderr": req.stderr})
+        text = resp.content.strip()
+
+        # 去除 markdown 标记
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        data = json.loads(text)
+        return HealPlanStepResponse(
+            suggested_command=data.get("suggested_command", req.command),
+            analysis=data.get("analysis", "未识别到具体异常，建议重试。"),
+        )
+    except Exception as e:
+        logger.exception("AI 自愈接口异常")
+        return HealPlanStepResponse(
+            suggested_command=req.command,
+            analysis=f"自愈模型调用异常: {str(e)}，建议人工介入修改命令。",
+        )

@@ -5,7 +5,7 @@ import {
   CalendarClock, Play, Pause, FileText, RefreshCw
 } from 'lucide-react';
 import { 
-  runAgent, listSecrets, runPlanStep, 
+  runAgent, listSecrets, runPlanStep, healPlanStep,
   type AgentRunResponse, type SecretMetadata 
 } from '../api';
 import { useI18n } from '../i18n';
@@ -82,7 +82,13 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
   const [editingStepIndex, setEditingStepIndex] = useState<{ msgId: number; stepIndex: number } | null>(null);
   const [editedCommandText, setEditedCommandText] = useState('');
 
-  const executePlanStep = async (msgId: number, stepIndex: number, customCommand?: string, autoNext: boolean = false) => {
+  const executePlanStep = async (
+    msgId: number, 
+    stepIndex: number, 
+    customCommand?: string, 
+    autoNext: boolean = false,
+    currentRetryCount: number = 0
+  ) => {
     // 1. 设置当前步骤状态为 running
     setMessages(prev => prev.map(m => {
       if (m.id === msgId && m.plan) {
@@ -100,7 +106,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     // 2. 找到该步骤
     const currentMsg = messages.find(m => m.id === msgId);
     if (!currentMsg || !currentMsg.plan) return;
-    const step = currentMsg.plan.steps.find(s => s.index === stepIndex);
+    const step = (currentMsg.plan.steps || []).find(s => s.index === stepIndex);
     if (!step) return;
 
     const cmdToRun = customCommand !== undefined ? customCommand : step.command;
@@ -113,6 +119,60 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
       });
 
       const isSuccess = res.status === 'success' && res.exit_code === 0;
+
+      // 如果执行失败，且未超出重试限制，触发自主纠错与自愈执行
+      if (!isSuccess && currentRetryCount < 1) {
+        setMessages(prev => prev.map(m => {
+          if (m.id === msgId && m.plan) {
+            return {
+              ...m,
+              plan: {
+                ...m.plan,
+                steps: m.plan.steps.map(s => s.index === stepIndex ? { 
+                  ...s, 
+                  status: 'running', 
+                  stdout: `🔍 正在智能分析步骤执行报错，尝试自主修复...\n[错误输出]：\n${res.stderr || 'Command failed'}`,
+                  stderr: null
+                } : s)
+              }
+            };
+          }
+          return m;
+        }));
+
+        try {
+          const healRes = await healPlanStep(sessionId, {
+            command: cmdToRun,
+            stderr: res.stderr || (res.exit_code !== 0 ? `Exit code: ${res.exit_code}` : 'Command failed'),
+            session_id: sessionId
+          });
+
+          const healLog = `💡 [自愈分析]：${healRes.analysis}\n🔄 [自愈尝试]：正在使用修正后的命令重新执行：\n$ ${healRes.suggested_command}`;
+          setMessages(prev => prev.map(m => {
+            if (m.id === msgId && m.plan) {
+              return {
+                ...m,
+                plan: {
+                  ...m.plan,
+                  steps: m.plan.steps.map(s => s.index === stepIndex ? { 
+                    ...s, 
+                    command: healRes.suggested_command,
+                    stdout: healLog
+                  } : s)
+                }
+              };
+            }
+            return m;
+          }));
+
+          setTimeout(() => {
+            executePlanStep(msgId, stepIndex, healRes.suggested_command, autoNext, currentRetryCount + 1);
+          }, 2500);
+          return;
+        } catch (healErr) {
+          console.error("Heal failed", healErr);
+        }
+      }
 
       // 3. 更新该步骤状态与输出
       setMessages(prev => {
@@ -139,7 +199,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
         if (autoNext && isSuccess) {
           const updatedMsg = nextMsgs.find(m => m.id === msgId);
           if (updatedMsg && updatedMsg.plan) {
-            const nextPendingStep = updatedMsg.plan.steps.find(s => s.status === 'pending');
+            const nextPendingStep = (updatedMsg.plan.steps || []).find(s => s.status === 'pending');
             if (nextPendingStep) {
               setTimeout(() => {
                 executePlanStep(msgId, nextPendingStep.index, undefined, true);
@@ -154,6 +214,59 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
       });
 
     } catch (err: any) {
+      if (currentRetryCount < 1) {
+        setMessages(prev => prev.map(m => {
+          if (m.id === msgId && m.plan) {
+            return {
+              ...m,
+              plan: {
+                ...m.plan,
+                steps: m.plan.steps.map(s => s.index === stepIndex ? { 
+                  ...s, 
+                  status: 'running', 
+                  stdout: `🔍 正在智能分析前置网络异常，尝试自主修复...\n[网络错误]：${err.message || '连接异常'}`,
+                  stderr: null
+                } : s)
+              }
+            };
+          }
+          return m;
+        }));
+
+        try {
+          const healRes = await healPlanStep(sessionId, {
+            command: cmdToRun,
+            stderr: err.message || 'Network connection failed',
+            session_id: sessionId
+          });
+
+          const healLog = `💡 [自愈分析]：${healRes.analysis}\n🔄 [自愈尝试]：正在使用修正后的命令重新执行：\n$ ${healRes.suggested_command}`;
+          setMessages(prev => prev.map(m => {
+            if (m.id === msgId && m.plan) {
+              return {
+                ...m,
+                plan: {
+                  ...m.plan,
+                  steps: m.plan.steps.map(s => s.index === stepIndex ? { 
+                    ...s, 
+                    command: healRes.suggested_command,
+                    stdout: healLog
+                  } : s)
+                }
+              };
+            }
+            return m;
+          }));
+
+          setTimeout(() => {
+            executePlanStep(msgId, stepIndex, healRes.suggested_command, autoNext, currentRetryCount + 1);
+          }, 2500);
+          return;
+        } catch (healErr) {
+          console.error("Heal failed", healErr);
+        }
+      }
+
       setMessages(prev => prev.map(m => {
         if (m.id === msgId && m.plan) {
           return {

@@ -410,3 +410,25 @@ export async function runPlanStep(sessionId: string, payload: RunPlanStepPayload
 }
 
 
+export interface HealPlanStepPayload {
+  command: string;
+  stderr: string;
+  session_id: string;
+}
+
+export interface HealPlanStepResponse {
+  suggested_command: string;
+  analysis: string;
+}
+
+export async function healPlanStep(sessionId: string, payload: HealPlanStepPayload): Promise<HealPlanStepResponse> {
+  const res = await fetch(`${API_BASE}/agent/heal_plan_step`, {
+    method: 'POST',
+    headers: getHeaders(sessionId),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await throwError(res);
+  return res.json();
+}
+
+

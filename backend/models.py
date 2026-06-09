@@ -194,6 +194,19 @@ class RunPlanStepResponse(BaseModel):
     status: str
 
 
+class HealPlanStepRequest(BaseModel):
+    """单步自愈请求。"""
+    command: str = Field(..., description="失败的命令")
+    stderr: str = Field(..., description="失败的报错日志")
+    session_id: str = Field(..., description="会话 ID")
+
+
+class HealPlanStepResponse(BaseModel):
+    """单步自愈响应。"""
+    suggested_command: str = Field(..., description="修正后的建议命令")
+    analysis: str = Field(..., description="报错分析与自愈思路")
+
+
 class ScheduledTaskResponse(BaseModel):
     """定时/计划任务详情。"""
     id: str
