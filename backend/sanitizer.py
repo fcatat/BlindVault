@@ -70,12 +70,12 @@ DEFAULT_PATTERNS = [
 # 审计用敏感词匹配规则（仅供提示泄露，不作替换，防止社区版漏报导致密码发送至LLM）
 AUDIT_PATTERNS = [
     {
-        "pattern": r'(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})\s+(?:root|admin|administrator|ubuntu|centos|debian|user|mysql|postgres|oracle)\s+([^\s,，。；;、\n\r\u4e00-\u9fa5]+)',
+        "pattern": r'(?:(?:[0-9]{1,3}\.){3}[0-9]{1,3})[\s,，;；]+(?:root|admin|administrator|ubuntu|centos|debian|user|mysql|postgres|oracle)[\s,，;；]+([^\s,，。；;、\n\r\u4e00-\u9fa5]+)',
         "secret_type": "password",
         "label": "ip_user_password",
     },
     {
-        "pattern": r'(?:[a-zA-Z0-9_\-\.]+@(?:[0-9]{1,3}\.){3}[0-9]{1,3})\s+([^\s,，。；;、\n\r\u4e00-\u9fa5]+)',
+        "pattern": r'(?:[a-zA-Z0-9_\-\.]+@(?:[0-9]{1,3}\.){3}[0-9]{1,3})[\s,，;；]+([^\s,，。；;、\n\r\u4e00-\u9fa5]+)',
         "secret_type": "password",
         "label": "ssh_user_ip_password",
     },
@@ -157,7 +157,7 @@ def _generate_secret_ref() -> str:
     return f"sec_live_{secrets_mod.token_urlsafe(24)}"
 
 
-async def detect_secrets(message: str, include_audit: bool = False) -> list[SensitiveMatch]:
+async def detect_secrets(message: str) -> list[SensitiveMatch]:
     """从消息中检测敏感信息，返回按位置从后向前排序的列表。"""
     matches: list[SensitiveMatch] = []
     seen_values: set[str] = set()
@@ -165,13 +165,6 @@ async def detect_secrets(message: str, include_audit: bool = False) -> list[Sens
     compiled_patterns = await get_compiled_patterns()
 
     all_patterns = list(compiled_patterns)
-    if include_audit:
-        for item in AUDIT_PATTERNS:
-            try:
-                pat = re.compile(item["pattern"], re.IGNORECASE)
-                all_patterns.append((pat, item["secret_type"], item["label"]))
-            except Exception as e:
-                logger.error("编译审计正则失败: %s, error=%s", item["pattern"], str(e))
 
     for compiled, secret_type, label_prefix in all_patterns:
         for m in compiled.finditer(message):
@@ -293,10 +286,7 @@ async def sanitize_message(
     if allowed_tools is None:
         allowed_tools = ["secure_shell"]
 
-    settings = get_settings()
-    include_audit = (settings.safety_policy_mode == "lax")
-
-    matches = await detect_secrets(message, include_audit=include_audit)
+    matches = await detect_secrets(message)
     if not matches:
         return message, []
 
