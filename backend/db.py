@@ -117,7 +117,6 @@ async def load_all_config() -> dict[str, str]:
 # LLM 配置持久化（高层接口）
 # ============================================================
 
-
 async def save_llm_config(
     provider: str,
     model: str,
@@ -131,6 +130,9 @@ async def save_llm_config(
     local_model_api_type: str = "ollama",
     local_model_prompt: str = "",
     local_model_disable_cot: bool = True,
+    agent_max_retries: int = 5,
+    agent_high_risk_commands: str = "",
+    agent_approval_required: bool = True,
 ) -> None:
     """
     保存 LLM 配置到 PostgreSQL。
@@ -147,6 +149,9 @@ async def save_llm_config(
     await save_config("local_model_api_type", local_model_api_type)
     await save_config("local_model_prompt", local_model_prompt)
     await save_config("local_model_disable_cot", "true" if local_model_disable_cot else "false")
+    await save_config("agent_max_retries", str(agent_max_retries))
+    await save_config("agent_high_risk_commands", agent_high_risk_commands)
+    await save_config("agent_approval_required", "true" if agent_approval_required else "false")
 
     if api_key:
         # 加密后存储
@@ -168,7 +173,8 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, any]:
 
     for key in (
         "llm_provider", "llm_model", "llm_base_url", "safety_policy_mode",
-        "local_model_url", "local_model_name", "local_model_api_type", "local_model_prompt"
+        "local_model_url", "local_model_name", "local_model_api_type", "local_model_prompt",
+        "agent_high_risk_commands"
     ):
         if key in all_cfg:
             result[key] = all_cfg[key]
@@ -181,6 +187,15 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, any]:
 
     if "local_model_disable_cot" in all_cfg:
         result["local_model_disable_cot"] = all_cfg["local_model_disable_cot"].lower() == "true"
+
+    if "agent_max_retries" in all_cfg:
+        try:
+            result["agent_max_retries"] = int(all_cfg["agent_max_retries"])
+        except ValueError:
+            result["agent_max_retries"] = 5
+
+    if "agent_approval_required" in all_cfg:
+        result["agent_approval_required"] = all_cfg["agent_approval_required"].lower() == "true"
 
     # 解密 API Key
     encrypted_key = all_cfg.get("llm_api_key_encrypted")

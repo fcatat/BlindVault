@@ -63,6 +63,10 @@ export function AgentConfig() {
   const [safetyPolicyMode, setSafetyPolicyMode] = useState('lax');
   const [showPrompt, setShowPrompt] = useState(false);
 
+  // Agent 闭环安全与熔断决策
+  const [agentMaxRetries, setAgentMaxRetries] = useState(5);
+  const [agentApprovalRequired, setAgentApprovalRequired] = useState(true);
+  const [agentHighRiskCommands, setAgentHighRiskCommands] = useState('');
 
 
   useEffect(() => {
@@ -92,6 +96,11 @@ export function AgentConfig() {
       setBaseUrl(cfg.llm_base_url);
       setSafetyPolicyMode(cfg.safety_policy_mode || 'lax');
       setApiKey(''); // API Key 不回传
+
+      // 绑定后端传来的运行策略
+      setAgentMaxRetries(cfg.agent_max_retries ?? 5);
+      setAgentApprovalRequired(cfg.agent_approval_required ?? true);
+      setAgentHighRiskCommands(cfg.agent_high_risk_commands ?? '');
 
       validateLlmConnection(cfg.llm_provider, cfg.has_api_key);
 
@@ -141,7 +150,8 @@ export function AgentConfig() {
         llm_base_url: baseUrl.trim(),
         llm_api_key: apiKey, // 空串 = 不更新
         safety_policy_mode: safetyPolicyMode,
-
+        agent_max_retries: agentMaxRetries,
+        agent_approval_required: agentApprovalRequired,
       });
       setConfig(result);
       setApiKey('');
@@ -423,6 +433,89 @@ export function AgentConfig() {
               <p className="text-xs text-on-surface-variant">
                 {t('config.modelHint')} <code className="bg-surface-container-high px-1 py-0.5 rounded text-primary text-[11px]">gpt-4o</code>、<code className="bg-surface-container-high px-1 py-0.5 rounded text-primary text-[11px]">qwen-plus</code>、<code className="bg-surface-container-high px-1 py-0.5 rounded text-primary text-[11px]">claude-sonnet-4-20250514</code>
               </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Agent 闭环安全与熔断配置 */}
+      <div className="mt-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300">
+        <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center gap-3">
+          <ShieldCheck className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold text-on-surface">{t('config.agentSecurityTitle')}</span>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <p className="text-xs text-on-surface-variant leading-relaxed">
+            {t('config.agentSecurityDesc')}
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* 最大自动重试次数 */}
+            <div className="space-y-2">
+              <label className="block text-xs font-label text-on-surface-variant font-medium">
+                {t('config.agentMaxRetries')}
+              </label>
+              <div className="relative bg-surface-container border border-outline-variant focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all rounded-lg flex items-center px-4 py-2.5">
+                <Clock className="text-on-surface-variant mr-3 w-4 h-4 opacity-70 shrink-0" />
+                <input
+                  type="number"
+                  min="1"
+                  max="20"
+                  value={agentMaxRetries}
+                  onChange={(e) => setAgentMaxRetries(parseInt(e.target.value) || 5)}
+                  className="w-full bg-transparent border-none text-sm text-on-surface focus:outline-none focus:ring-0 p-0 font-mono"
+                />
+              </div>
+              <p className="text-xs text-on-surface-variant">
+                {t('config.agentMaxRetriesHint')}
+              </p>
+            </div>
+
+            {/* 高危审批开关 */}
+            <div className="space-y-2">
+              <label className="block text-xs font-label text-on-surface-variant font-medium">
+                {t('config.agentApprovalRequired')}
+              </label>
+              <div className="flex items-center gap-3 bg-surface-container border border-outline-variant rounded-lg px-4 py-2.5">
+                <input
+                  type="checkbox"
+                  id="agentApprovalRequired"
+                  checked={agentApprovalRequired}
+                  onChange={(e) => setAgentApprovalRequired(e.target.checked)}
+                  className="h-4 w-4 rounded border-outline-variant text-primary focus:ring-primary cursor-pointer"
+                />
+                <label htmlFor="agentApprovalRequired" className="text-sm text-on-surface cursor-pointer select-none font-semibold">
+                  {t('config.enable')}
+                </label>
+              </div>
+              <p className="text-xs text-on-surface-variant">
+                {t('config.agentApprovalRequiredDesc')}
+              </p>
+            </div>
+          </div>
+
+          {/* 高危指令拦截只读规则 */}
+          <div className="space-y-2 pt-4 border-t border-outline-variant/50">
+            <label className="block text-xs font-label text-on-surface-variant font-medium">
+              {t('config.agentHighRiskCommands')}
+            </label>
+            <p className="text-xs text-on-surface-variant mb-2">
+              {t('config.agentHighRiskCommandsHint')}
+            </p>
+            <div className="bg-surface-container border border-outline-variant rounded-lg p-3 min-h-[46px] flex flex-wrap gap-1.5 items-center">
+              {agentHighRiskCommands ? (
+                agentHighRiskCommands.split('|').map((cmd, idx) => (
+                  <span
+                    key={idx}
+                    className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                  >
+                    {cmd}
+                  </span>
+                ))
+              ) : (
+                <span className="text-xs text-on-surface-variant/60 font-mono">未配置拦截指令</span>
+              )}
             </div>
           </div>
         </div>

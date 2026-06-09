@@ -114,6 +114,15 @@ const translations = {
     'config.promptPreviewDesc': '此处展示系统底层锚定的安全防泄露指令与工具调度规约。为防止大模型越狱或工具链失能，社区版仅提供只读预览，不支持手动修改。',
     'config.promptShow': '展开系统 Prompt 详情',
     'config.promptHide': '收起系统 Prompt 详情',
+    'config.agentSecurityTitle': 'Agent 闭环安全与熔断配置',
+    'config.agentSecurityDesc': '配置 Agent 的运行保护策略，防止死循环无限重试，以及对高危运维指令的硬性人机阻断审批。',
+    'config.agentMaxRetries': '最大自动重试次数 (熔断阈值)',
+    'config.agentMaxRetriesHint': '限制 Agent 在一个会话中执行工具链的次数上限。达到上限时强行断路，避免死循环和 API 费用。',
+    'config.agentApprovalRequired': '敏感指令强阻断审批 (Human-in-the-Loop)',
+    'config.agentApprovalRequiredDesc': '当 Agent 尝试在沙箱执行敏感运维命令时，暂停执行并弹窗由用户手动审批。',
+    'config.agentHighRiskCommands': '拦截高危指令列表 (只读)',
+    'config.agentHighRiskCommandsHint': '被系统底层硬性监控和拦截的正则命令，不可绕过，只读预览。',
+    'config.enable': '启用',
 
     // 企业版：本地模型网关
     'config.localModelTitle': '本地模型网关',
@@ -388,6 +397,15 @@ const translations = {
     'config.promptPreviewDesc': 'This panel displays the core system prompt rules for security enforcement and tool routing. To prevent prompt jailbreaking or utility degradation, the community edition only provides read-only audit access.',
     'config.promptShow': 'Expand System Prompt Details',
     'config.promptHide': 'Collapse System Prompt Details',
+    'config.agentSecurityTitle': 'Agent Security & Circuit Breaker',
+    'config.agentSecurityDesc': 'Configure execution protection strategies to prevent infinite loops and enforce approval for high-risk commands.',
+    'config.agentMaxRetries': 'Max Auto-Retries (Breaker Limit)',
+    'config.agentMaxRetriesHint': 'Limits the maximum number of tool executions in a single run. The breaker trips when reached to prevent API cost leak.',
+    'config.agentApprovalRequired': 'Enforce Approval for High-Risk Commands',
+    'config.agentApprovalRequiredDesc': 'When enabled, high-risk administrative actions will be suspended and require manual confirmation.',
+    'config.agentHighRiskCommands': 'Monitored Sensitive Commands (Read-only)',
+    'config.agentHighRiskCommandsHint': 'High-risk wildcard/regex command rules strictly intercepted by system runtime. Read-only for compliance.',
+    'config.enable': 'Enable',
 
     // Enterprise: Local Model Gateway
     'config.localModelTitle': 'Local Model Gateway',

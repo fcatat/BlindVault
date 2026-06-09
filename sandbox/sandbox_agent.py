@@ -50,10 +50,10 @@ async def execute_command(payload: ExecuteRequest):
             stderr=asyncio.subprocess.PIPE,
         )
         try:
-            # 30秒超时保护
+            # 60秒超时保护
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(),
-                timeout=30.0
+                timeout=60.0
             )
         except asyncio.TimeoutError:
             try:
@@ -63,7 +63,7 @@ async def execute_command(payload: ExecuteRequest):
             await proc.communicate()
             return {
                 "stdout": "",
-                "stderr": "Command execution timed out in isolated sandbox (30 seconds limit).",
+                "stderr": "Command execution timed out in isolated sandbox (60 seconds limit).",
                 "exit_code": -1
             }
             

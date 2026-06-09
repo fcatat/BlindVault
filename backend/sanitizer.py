@@ -293,9 +293,6 @@ async def sanitize_message(
     if allowed_tools is None:
         allowed_tools = ["secure_shell"]
 
-    if "{{secret:" in message:
-        return message, []
-
     settings = get_settings()
     include_audit = (settings.safety_policy_mode == "lax")
 

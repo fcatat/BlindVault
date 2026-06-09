@@ -8,7 +8,7 @@ import { useI18n } from '../i18n';
 
 interface Message {
   id: number;
-  type: 'user' | 'agent' | 'tool_result' | 'loading';
+  type: 'user' | 'agent' | 'tool_result' | 'loading' | 'approval';
   text: string;
   sanitizedText?: string;
   toolCalls?: AgentRunResponse['tool_calls'];
@@ -16,6 +16,9 @@ interface Message {
   leakDetected?: boolean;
   leakedValue?: string;
   isBlocked?: boolean;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
+  pendingCommand?: string;
+  triggeredRule?: string;
 }
 
 interface ChatProps {
@@ -64,6 +67,10 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
   });
   const [inputVal, setInputVal] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // 审批流程相关的 State
+  const [lastUserMessage, setLastUserMessage] = useState('');
+
   const [activeTraceMsgId, setActiveTraceMsgId] = useState<number | null>(() => {
     try {
       const cachedTrace = localStorage.getItem(`bv_chat_active_trace_${sessionId}`);
@@ -155,6 +162,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     setMessages(loadedMessages);
     setInputVal('');
     setIsLoading(false);
+    setLastUserMessage('');
 
     fetchSecretsMetadata();
 
@@ -196,9 +204,12 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  const handleSend = async () => {
-    const text = inputVal.trim();
+  const handleSend = async (overrideText?: string, isConfirmed?: boolean) => {
+    const text = overrideText !== undefined ? overrideText : inputVal.trim();
     if (!text || isLoading) return;
+
+    const isApprovalPending = messages.some(m => m.type === 'approval' && m.approvalStatus === 'pending');
+    if (isApprovalPending && !isConfirmed) return;
 
     if (streamTimerRef.current) {
       clearInterval(streamTimerRef.current);
@@ -208,8 +219,12 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     const userMsg: Message = { id: Date.now(), type: 'user', text };
     const loadingMsg: Message = { id: Date.now() + 1, type: 'loading', text: '' };
     
-    setMessages(prev => [...prev, userMsg, loadingMsg]);
-    setInputVal('');
+    if (isConfirmed) {
+      setMessages(prev => [...prev, loadingMsg]);
+    } else {
+      setMessages(prev => [...prev, userMsg, loadingMsg]);
+      setInputVal('');
+    }
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -224,8 +239,32 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
           content: m.sanitizedText || m.text,
         }));
 
-      const resp = await runAgent({ user_message: text, session_id: sessionId, history }, controller.signal);
+      const resp = await runAgent({ 
+        user_message: text, 
+        session_id: sessionId, 
+        history,
+        confirmed: isConfirmed || false
+      }, controller.signal);
       
+      // 检测是否需要审批
+      if (resp.requires_approval && resp.pending_command) {
+        const approvalMsg: Message = {
+          id: Date.now(),
+          type: 'approval',
+          text: '安全审批挂起',
+          approvalStatus: 'pending',
+          pendingCommand: resp.pending_command,
+          triggeredRule: resp.triggered_rule || '',
+        };
+        setLastUserMessage(text);
+        
+        // 移除 loading 状态并追加审批消息
+        setMessages(prev => [...prev.filter(m => m.type !== 'loading'), approvalMsg]);
+        setIsLoading(false);
+        abortControllerRef.current = null;
+        return;
+      }
+
       setMessages(prev => {
         const filtered = prev.filter(m => m.type !== 'loading');
         return filtered.map(m =>
@@ -252,7 +291,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
 
       let currentLength = 0;
       const speed = 10; // 毫秒
-      const charsPerTick = 4; // 每次4个字符，兼顾流畅与打字速度
+      const charsPerTick = 4; // 每次4个字符
 
       const timer = setInterval(() => {
         currentLength += charsPerTick;
@@ -308,6 +347,37 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     }
   };
 
+  const handleApprove = (approvalMsgId: number) => {
+    // 1. 将该消息状态置为 approved
+    setMessages(prev => prev.map(m => m.id === approvalMsgId ? { ...m, approvalStatus: 'approved' } : m));
+    
+    // 2. 找到用于重新发送的文本
+    let textToSend = lastUserMessage;
+    if (!textToSend) {
+      const idx = messages.findIndex(m => m.id === approvalMsgId);
+      if (idx > 0) {
+        for (let i = idx - 1; i >= 0; i--) {
+          if (messages[i].type === 'user') {
+            textToSend = messages[i].text;
+            break;
+          }
+        }
+      }
+    }
+    
+    // 3. 发送
+    if (textToSend) {
+      handleSend(textToSend, true);
+    } else {
+      showToast('⚠️ 未找到前置指令，请尝试重新输入。');
+    }
+  };
+
+  const handleReject = (approvalMsgId: number) => {
+    // 将该消息状态置为 rejected，即原地置灰留痕
+    setMessages(prev => prev.map(m => m.id === approvalMsgId ? { ...m, approvalStatus: 'rejected' } : m));
+  };
+
   const handleStop = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -331,6 +401,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
   };
 
   const activeTraceMsg = messages.find(m => m.id === activeTraceMsgId) || null;
+  const isApprovalPending = messages.some(m => m.type === 'approval' && m.approvalStatus === 'pending');
   
   let activeUserMsgText = '';
   if (activeTraceMsg) {
@@ -369,6 +440,124 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
               );
             }
 
+            if (msg.type === 'approval') {
+              const isPending = msg.approvalStatus === 'pending';
+              const isApproved = msg.approvalStatus === 'approved';
+              const isRejected = msg.approvalStatus === 'rejected';
+
+              return (
+                <div key={msg.id} className="flex gap-4 max-w-3xl self-start animate-in fade-in slide-in-from-bottom-4 duration-300 my-4 w-full">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-1 ${
+                    isPending 
+                      ? 'bg-amber-500/10 border border-amber-500/20 animate-pulse' 
+                      : isApproved
+                        ? 'bg-green-500/10 border border-green-500/20'
+                        : 'bg-outline-variant/10 border border-outline-variant/20'
+                  }`}>
+                    {isPending && <ShieldAlert className="text-amber-600 w-4 h-4" />}
+                    {isApproved && <CheckCircle2 className="text-green-600 w-4 h-4" />}
+                    {isRejected && <XCircle className="text-outline/70 w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-4">
+                    <div className={`rounded-2xl rounded-tl-sm p-5 border-2 shadow-lg backdrop-blur-md transition-all duration-300 ${
+                      isPending
+                        ? 'bg-amber-500/5 border-amber-500/35 shadow-amber-500/5'
+                        : isApproved
+                          ? 'bg-green-500/5 border-green-500/35 shadow-green-500/5'
+                          : 'bg-surface-variant/20 border-outline-variant/40 shadow-none text-outline/80'
+                    }`}>
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          {isPending && (
+                            <span className="flex h-2.5 w-2.5 relative">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                            </span>
+                          )}
+                          <h4 className={`text-sm font-headline font-bold ${
+                            isPending 
+                              ? 'text-amber-800 dark:text-amber-400' 
+                              : isApproved
+                                ? 'text-green-800 dark:text-green-400'
+                                : 'text-outline dark:text-outline'
+                          }`}>
+                            {isPending && '高危操作确认：人机协同审批拦截'}
+                            {isApproved && '✓ 已授权执行：高危操作审批通过'}
+                            {isRejected && '❌ 已拒绝操作：敏感指令已被拦截'}
+                          </h4>
+                        </div>
+                        {msg.triggeredRule && (
+                          <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-semibold ${
+                            isPending
+                              ? 'bg-amber-100 text-amber-800'
+                              : isApproved
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-surface-container-high text-outline'
+                          }`}>
+                            触发规则: {msg.triggeredRule}
+                          </span>
+                        )}
+                      </div>
+                      
+                      <p className="text-xs text-on-surface-variant leading-relaxed mb-4">
+                        {isPending && 'Agent 在尝试执行任务时，触发了系统级高危指令拦截规则。根据企业安全策略，您需要手动审核并授权方可在沙箱中运行此敏感命令。'}
+                        {isApproved && '您已手动授权执行该敏感高危命令，系统已在沙箱安全容器中完成分发并继续任务。'}
+                        {isRejected && '已安全拒绝并中断该敏感高危指令的运行。'}
+                      </p>
+
+                      {/* 敏感命令框 */}
+                      <div className={`relative group my-3 border rounded-xl overflow-hidden select-text text-left ${
+                        isPending
+                          ? 'border-amber-500/20 bg-surface-dim'
+                          : isApproved
+                            ? 'border-green-500/20 bg-surface-dim'
+                            : 'border-outline-variant/30 bg-surface-dim/40'
+                      }`}>
+                        <div className={`flex items-center justify-between px-4 py-1.5 border-b text-[10px] font-mono select-none ${
+                          isPending
+                            ? 'bg-amber-500/5 border-amber-500/20 text-amber-700'
+                            : isApproved
+                              ? 'bg-green-500/5 border-green-500/20 text-green-700'
+                              : 'bg-surface-container border-outline-variant/30 text-outline'
+                        }`}>
+                          <span>shell command</span>
+                          <CopyButton text={msg.pendingCommand || ''} />
+                        </div>
+                        <pre className={`p-4 overflow-x-auto font-mono text-xs leading-relaxed whitespace-pre select-all bg-black/5 dark:bg-black/30 ${
+                          isPending
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : isApproved
+                              ? 'text-green-600 dark:text-green-400'
+                              : 'text-outline/80 dark:text-outline-variant/80'
+                        }`}>
+                          <code>{msg.pendingCommand}</code>
+                        </pre>
+                      </div>
+
+                      {/* 交互按钮 */}
+                      {isPending && (
+                        <div className="flex items-center gap-3 mt-4 pt-3 border-t border-outline-variant/30">
+                          <button
+                            onClick={() => handleApprove(msg.id)}
+                            className="px-4 py-2 rounded-lg text-xs font-semibold bg-amber-600 hover:bg-amber-750 text-white shadow-md shadow-amber-500/10 active:scale-95 transition-all flex items-center gap-1.5"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            授权执行
+                          </button>
+                          <button
+                            onClick={() => handleReject(msg.id)}
+                            className="px-4 py-2 rounded-lg text-xs font-semibold border border-outline-variant text-on-surface hover:bg-surface-container-high active:scale-95 transition-all"
+                          >
+                            拒绝操作
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
             if (msg.type === 'agent') {
               const hasTools = msg.toolCalls && msg.toolCalls.length > 0;
               const isTraceActive = msg.id === activeTraceMsgId;
@@ -377,7 +566,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                 return (
                   <div key={msg.id} className="flex gap-4 max-w-3xl self-start animate-in fade-in slide-in-from-bottom-2">
                     <div className="w-8 h-8 rounded-full bg-red-100 border border-red-200 flex items-center justify-center shrink-0 mt-1">
-                      <ShieldAlert className="text-red-650 w-4 h-4" />
+                      <ShieldAlert className="text-red-655 w-4 h-4" />
                     </div>
                     <div className="space-y-3 flex-1 min-w-0">
                       <div className="rounded-2xl rounded-tl-sm p-4 bg-red-50 border border-red-200 text-sm text-red-950 leading-relaxed shadow-sm">
@@ -513,7 +702,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                                   isInactive 
                                     ? 'border-outline-variant text-outline' 
                                     : 'border-primary/20 text-on-surface-variant'
-                                }`}>
+                                  }`}>
                                   {expiryText}
                                 </span>
                               )}
@@ -536,7 +725,6 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                 <div className="bg-surface-container p-4 rounded-2xl rounded-tr-sm text-sm text-on-surface leading-relaxed border border-outline-variant shadow-sm">
                   {renderMessageContent(msg.text)}
                 </div>
-
               </div>
             );
           })}
@@ -549,7 +737,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
               <textarea 
                 ref={inputRef}
                 className="w-full bg-transparent border-none rounded-xl pl-4 pr-12 py-3.5 text-sm text-on-surface placeholder:text-on-surface-variant/70 focus:outline-none focus:ring-0 resize-none min-h-[52px] max-h-32" 
-                placeholder={t('chat.inputPlaceholder')} 
+                placeholder={isApprovalPending ? "请先处理上方的安全审批请求..." : t('chat.inputPlaceholder')} 
                 rows={1}
                 value={inputVal}
                 onChange={(e) => setInputVal(e.target.value)}
@@ -557,7 +745,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                 onCompositionStart={() => { isComposingRef.current = true; }}
                 onCompositionEnd={() => { isComposingRef.current = false; }}
                 onPaste={handlePaste}
-                disabled={isLoading}
+                disabled={isLoading || isApprovalPending}
               ></textarea>
 
               {isLoading ? (
@@ -572,8 +760,8 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                 </button>
               ) : (
                 <button 
-                  onClick={handleSend}
-                  disabled={!inputVal.trim()}
+                  onClick={() => handleSend()}
+                  disabled={!inputVal.trim() || isApprovalPending}
                   className="absolute right-2.5 bottom-2.5 p-2 rounded-lg bg-primary text-white hover:bg-primary/90 transition-all active:scale-95 flex items-center justify-center shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Send className="w-4 h-4 ml-0.5" />

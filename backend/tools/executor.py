@@ -112,6 +112,32 @@ async def execute_tool_call(
 
     # 5. 脱敏结果
     safe_result = redact_sensitive_fields(result)
+
+    # 6. 后置命令诊断增强 (Enriched Output)
+    if isinstance(safe_result, dict):
+        stderr_content = str(safe_result.get("stderr", "")).lower()
+        stdout_content = str(safe_result.get("stdout", "")).lower()
+        exit_code = safe_result.get("exit_code")
+
+        # 检查是否包含 command not found (退出码 127)
+        if "command not found" in stderr_content or "not found" in stderr_content or exit_code == 127:
+            missing_tool = ""
+            for tool in ("zip", "unzip", "curl", "wget", "git", "mysql", "psql", "redis-cli"):
+                if tool in stderr_content or tool in stdout_content:
+                    missing_tool = tool
+                    break
+            diag = "\n\n[BlindVault 诊断助手]: 系统检测到执行失败。原因大概率是沙箱缺少指令依赖。"
+            if missing_tool:
+                diag += f" 请尝试先执行 'apt-get update && apt-get install -y {missing_tool}' 安装依赖，然后再重试您的任务。"
+            else:
+                diag += " 请尝试先使用 apt-get 安装对应的命令包，然后再重试您的任务。"
+            
+            safe_result["stderr"] = safe_result.get("stderr", "") + diag
+
+        elif "connection refused" in stderr_content or "timeout" in stderr_content or "port 22" in stderr_content:
+            diag = "\n\n[BlindVault 诊断助手]: 系统检测到网络连接或端口连通异常。建议执行 'ping -c 3 <目标IP>' 或 'nc -w 3 -z <目标IP> <端口>' 探测远程主机状态。"
+            safe_result["stderr"] = safe_result.get("stderr", "") + diag
+
     return ToolMessage(
         content=json.dumps(safe_result, ensure_ascii=False),
         tool_call_id=tool_call_id,

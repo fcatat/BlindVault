@@ -44,7 +44,7 @@ ask() {
   else
     echo -ne "  ${CYAN}?${NC}  ${prompt}: "
   fi
-  read -r input
+  read -r input < /dev/tty
   eval "$var_name=\"${input:-$default}\""
 }
 

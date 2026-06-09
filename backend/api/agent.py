@@ -80,6 +80,7 @@ async def agent_run(
         session_id=session_id,
         tenant_id=x_tenant_id,
         history=req.history,
+        confirmed=req.confirmed,
     )
 
     # 合并自动创建的 secret_refs

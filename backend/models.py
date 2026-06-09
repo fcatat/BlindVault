@@ -144,6 +144,7 @@ class AgentRunRequest(BaseModel):
     user_message: str = Field(..., min_length=1, description="用户消息")
     session_id: str = Field(..., min_length=1, description="会话 ID")
     history: list[dict] = Field(default_factory=list, description="对话历史 [{role, content}]")
+    confirmed: bool = Field(default=False, description="高危操作是否已被用户确认")
 
 
 class AgentRunResponse(BaseModel):
@@ -154,3 +155,7 @@ class AgentRunResponse(BaseModel):
     sanitized_input: str = Field(default="", description="脱敏后的用户输入，用于构建安全的对话历史")
     leak_detected: bool = Field(default=False, description="是否检测到敏感信息泄漏至模型")
     leaked_value: Optional[str] = Field(default=None, description="泄漏的敏感明文内容")
+    status: str = Field(default="success", description="执行状态：success | requires_approval | error")
+    requires_approval: bool = Field(default=False, description="是否需要用户确认")
+    pending_command: Optional[str] = Field(default=None, description="等待审批的高危命令")
+    triggered_rule: Optional[str] = Field(default=None, description="触发的高危拦截规则")

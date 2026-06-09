@@ -77,6 +77,7 @@ export interface AgentRunPayload {
   user_message: string;
   session_id: string;
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  confirmed?: boolean;
 }
 
 export interface AgentRunResponse {
@@ -89,6 +90,10 @@ export interface AgentRunResponse {
   sanitized_input: string;
   leak_detected?: boolean;
   leaked_value?: string;
+  status?: string;
+  requires_approval?: boolean;
+  pending_command?: string;
+  triggered_rule?: string;
 }
 
 // ---- API 函数 ----
@@ -153,6 +158,10 @@ export interface LLMConfig {
   local_model_api_type: string;
   local_model_prompt: string;
   local_model_disable_cot: boolean;
+  // 运行与安全决策
+  agent_max_retries: number;
+  agent_high_risk_commands: string;
+  agent_approval_required: boolean;
 }
 
 export interface LLMConfigUpdate {
@@ -168,6 +177,10 @@ export interface LLMConfigUpdate {
   local_model_api_type?: string;
   local_model_prompt?: string;
   local_model_disable_cot?: boolean;
+  // 运行与安全决策
+  agent_max_retries?: number;
+  agent_high_risk_commands?: string;
+  agent_approval_required?: boolean;
 }
 
 // ---- Config API ----

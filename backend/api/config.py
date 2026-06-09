@@ -41,6 +41,10 @@ class LLMConfigResponse(BaseModel):
     local_model_api_type: str = "ollama"
     local_model_prompt: str = ""
     local_model_disable_cot: bool = True
+    # 运行与安全决策
+    agent_max_retries: int = 5
+    agent_high_risk_commands: str = ""
+    agent_approval_required: bool = True
 
 
 class LLMConfigUpdate(BaseModel):
@@ -57,6 +61,10 @@ class LLMConfigUpdate(BaseModel):
     local_model_api_type: str | None = None
     local_model_prompt: str | None = None
     local_model_disable_cot: bool | None = None
+    # 运行与安全决策
+    agent_max_retries: int | None = None
+    agent_high_risk_commands: str | None = None
+    agent_approval_required: bool | None = None
 
 
 @router.get("", response_model=LLMConfigResponse)
@@ -76,6 +84,9 @@ async def get_config():
         local_model_api_type=settings.local_model_api_type,
         local_model_prompt=settings.local_model_prompt or DEFAULT_LOCAL_PROMPT,
         local_model_disable_cot=settings.local_model_disable_cot,
+        agent_max_retries=settings.agent_max_retries,
+        agent_high_risk_commands=settings.agent_high_risk_commands,
+        agent_approval_required=settings.agent_approval_required,
     )
 
 
@@ -112,6 +123,12 @@ async def update_config(payload: LLMConfigUpdate):
         settings.local_model_prompt = payload.local_model_prompt.strip()
     if payload.local_model_disable_cot is not None:
         settings.local_model_disable_cot = payload.local_model_disable_cot
+    if payload.agent_max_retries is not None:
+        settings.agent_max_retries = payload.agent_max_retries
+    if payload.agent_high_risk_commands is not None:
+        settings.agent_high_risk_commands = payload.agent_high_risk_commands.strip()
+    if payload.agent_approval_required is not None:
+        settings.agent_approval_required = payload.agent_approval_required
 
     # 持久化到 PostgreSQL
     try:
@@ -128,6 +145,9 @@ async def update_config(payload: LLMConfigUpdate):
             local_model_api_type=settings.local_model_api_type,
             local_model_prompt=settings.local_model_prompt or DEFAULT_LOCAL_PROMPT,
             local_model_disable_cot=settings.local_model_disable_cot,
+            agent_max_retries=settings.agent_max_retries,
+            agent_high_risk_commands=settings.agent_high_risk_commands,
+            agent_approval_required=settings.agent_approval_required,
         )
     except Exception:
         logger.exception("配置持久化失败，但内存中已更新")
@@ -154,6 +174,9 @@ async def update_config(payload: LLMConfigUpdate):
         local_model_api_type=settings.local_model_api_type,
         local_model_prompt=settings.local_model_prompt or DEFAULT_LOCAL_PROMPT,
         local_model_disable_cot=settings.local_model_disable_cot,
+        agent_max_retries=settings.agent_max_retries,
+        agent_high_risk_commands=settings.agent_high_risk_commands,
+        agent_approval_required=settings.agent_approval_required,
     )
 
 
