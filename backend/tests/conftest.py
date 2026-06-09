@@ -42,6 +42,7 @@ TEST_KEY_B64 = base64.urlsafe_b64encode(TEST_KEY_RAW).decode()
 os.environ["BLINDVAULT_ENCRYPTION_KEY"] = TEST_KEY_B64
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"  # 不会真正使用
 os.environ["LLM_PROVIDER"] = "mock"
+os.environ["DATABASE_URL"] = "postgresql://blindvault:blindvault_default_pg_pass@127.0.0.1:5433/blindvault"
 
 
 # ============================================================

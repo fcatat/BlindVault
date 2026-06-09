@@ -7,10 +7,12 @@ import { Chat } from './components/Chat';
 import { RulesConfig } from './components/RulesConfig';
 import { AgentConfig } from './components/AgentConfig';
 import { LocalModelConfig } from './components/LocalModelConfig';
+import { ScheduledTasks } from './components/ScheduledTasks';
 import { EnterprisePlaceholder } from './components/EnterprisePlaceholder';
 import { AddCredentialModal } from './components/AddCredentialModal';
 import { ViewState } from './types';
 import { checkEEStatus, type EEStatus } from './api';
+
 
 function generateSessionId(): string {
   return `session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -148,6 +150,8 @@ export default function App() {
           )}
           {activeView === 'rules' && <RulesConfig />}
           {activeView === 'config' && <AgentConfig />}
+          {activeView === 'tasks' && <ScheduledTasks sessionId={activeSessionId} />}
+
 
           {/* 企业版独立路由页面 */}
           {activeView === 'local_model' && <LocalModelConfig />}

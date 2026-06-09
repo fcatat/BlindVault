@@ -1,6 +1,7 @@
 export type ViewState = 
-  | 'dashboard' | 'chat' | 'rules' | 'config' 
+  | 'dashboard' | 'chat' | 'rules' | 'config' | 'tasks'
   | 'local_model' | 'sso' | 'audit' | 'multi_model' | 'policy' | 'hardware';
+
 
 
 export interface AppState {

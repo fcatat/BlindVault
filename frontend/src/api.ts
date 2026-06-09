@@ -94,7 +94,26 @@ export interface AgentRunResponse {
   requires_approval?: boolean;
   pending_command?: string;
   triggered_rule?: string;
+  plan?: TaskPlan;
 }
+
+
+export interface TaskPlanStep {
+  index: number;
+  title: string;
+  command: string;
+  secret_ref: string | null;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  stdout: string | null;
+  stderr: string | null;
+}
+
+
+export interface TaskPlan {
+  id: string;
+  steps: TaskPlanStep[];
+}
+
 
 // ---- API 函数 ----
 
@@ -302,4 +321,92 @@ export async function checkEEStatus(): Promise<EEStatus> {
     return { edition: 'community', licensed: false, features: [] };
   }
 }
+
+
+// ============================================================
+// 定时任务 (Scheduled Tasks) 与步骤执行 (Plan Steps)
+// ============================================================
+
+export interface ScheduledTask {
+  id: string;
+  user_id: string;
+  session_id: string;
+  tenant_id: string;
+  label: string;
+  command: string;
+  secret_ref: string | null;
+  cron_expression: string | null;
+  delay_seconds: number | null;
+  next_run_at: string;
+  status: 'active' | 'paused' | 'completed' | 'failed';
+  created_at: string;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_run_output: string | null;
+}
+
+export interface RunPlanStepPayload {
+  command: string;
+  secret_ref?: string;
+  session_id: string;
+}
+
+export interface RunPlanStepResponse {
+  exit_code: number;
+  stdout: string;
+  stderr: string;
+  status: 'success' | 'error';
+}
+
+export async function listScheduledTasks(sessionId: string): Promise<ScheduledTask[]> {
+  const res = await fetch(`${API_BASE}/tasks`, {
+    headers: getHeaders(sessionId),
+  });
+  if (!res.ok) throw new Error(`获取计划任务列表失败: ${res.status}`);
+  return res.json();
+}
+
+export async function pauseScheduledTask(sessionId: string, taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/pause`, {
+    method: 'POST',
+    headers: getHeaders(sessionId),
+  });
+  if (!res.ok) await throwError(res);
+}
+
+export async function resumeScheduledTask(sessionId: string, taskId: string): Promise<{ status: string; next_run_at: string }> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/resume`, {
+    method: 'POST',
+    headers: getHeaders(sessionId),
+  });
+  if (!res.ok) await throwError(res);
+  return res.json();
+}
+
+export async function deleteScheduledTask(sessionId: string, taskId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}`, {
+    method: 'DELETE',
+    headers: getHeaders(sessionId),
+  });
+  if (!res.ok) await throwError(res);
+}
+
+export async function getScheduledTaskLogs(sessionId: string, taskId: string): Promise<{ task_id: string; last_run_at: string | null; last_run_status: string | null; output: string }> {
+  const res = await fetch(`${API_BASE}/tasks/${taskId}/logs`, {
+    headers: getHeaders(sessionId),
+  });
+  if (!res.ok) await throwError(res);
+  return res.json();
+}
+
+export async function runPlanStep(sessionId: string, payload: RunPlanStepPayload): Promise<RunPlanStepResponse> {
+  const res = await fetch(`${API_BASE}/agent/run_plan_step`, {
+    method: 'POST',
+    headers: getHeaders(sessionId),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) await throwError(res);
+  return res.json();
+}
+
 

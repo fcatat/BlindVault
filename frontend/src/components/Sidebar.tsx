@@ -5,8 +5,10 @@ import { EEStatus } from '../api';
 import { 
   ShieldAlert, Plus, MessageSquare, Key, SquareTerminal, 
   Bot, FileText, FileBadge, PlusCircle, Trash2,
-  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Crown, Sparkles, Image, EyeOff
+  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Crown, Sparkles, Image, EyeOff,
+  CalendarClock
 } from 'lucide-react';
+
 
 export interface SessionInfo {
   id: string;
@@ -31,10 +33,12 @@ export function Sidebar({
   sessions, activeSessionId, onSelectSession, onNewSession, onDeleteSession,
   eeStatus,
 }: SidebarProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const isZh = locale === 'zh';
 
   return (
     <nav className="hidden md:flex flex-col pt-16 z-40 bg-surface border-r border-outline-variant h-screen w-64 fixed left-0 top-0 overflow-y-auto">
+
       <div className="px-6 pb-6 border-b border-outline-variant mb-4">
         <div className="flex items-center gap-3 mb-6">
           <div className="h-10 w-10 rounded bg-primary-fixed border border-primary-fixed-dim flex items-center justify-center">
@@ -120,6 +124,13 @@ export function Sidebar({
           isActive={activeView === 'config'} 
           onClick={() => onNavigate('config')} 
         />
+        <NavItem 
+          icon={<CalendarClock className="w-4 h-4" />} 
+          label={isZh ? '计划定时任务' : 'Scheduled Tasks'} 
+          isActive={activeView === 'tasks'} 
+          onClick={() => onNavigate('tasks')} 
+        />
+
 
         {/* Enterprise Section */}
         <div className="pt-5 pb-1 px-2">

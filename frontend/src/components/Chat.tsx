@@ -1,9 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Bot, Key, Lock, ShieldAlert, Send, CheckCircle2, 
-  XCircle, Wrench, Loader2, Terminal, Sparkles
+  XCircle, Wrench, Loader2, Terminal, Sparkles,
+  CalendarClock, Play, Pause, FileText, RefreshCw
 } from 'lucide-react';
-import { runAgent, listSecrets, type AgentRunResponse, type SecretMetadata } from '../api';
+import { 
+  runAgent, listSecrets, runPlanStep, 
+  type AgentRunResponse, type SecretMetadata 
+} from '../api';
 import { useI18n } from '../i18n';
 
 interface Message {
@@ -19,6 +23,7 @@ interface Message {
   approvalStatus?: 'pending' | 'approved' | 'rejected';
   pendingCommand?: string;
   triggeredRule?: string;
+  plan?: AgentRunResponse['plan'];
 }
 
 interface ChatProps {
@@ -28,8 +33,10 @@ interface ChatProps {
 }
 
 export function Chat({ sessionId, onFirstMessage }: ChatProps) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  const isZh = locale === 'zh';
   const abortControllerRef = useRef<AbortController | null>(null);
+
   const streamTimerRef = useRef<any>(null);
 
   // 组件卸载时清理定时器
@@ -70,6 +77,134 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
 
   // 审批流程相关的 State
   const [lastUserMessage, setLastUserMessage] = useState('');
+
+  // 步骤执行计划相关的 State
+  const [editingStepIndex, setEditingStepIndex] = useState<{ msgId: number; stepIndex: number } | null>(null);
+  const [editedCommandText, setEditedCommandText] = useState('');
+
+  const executePlanStep = async (msgId: number, stepIndex: number, customCommand?: string, autoNext: boolean = false) => {
+    // 1. 设置当前步骤状态为 running
+    setMessages(prev => prev.map(m => {
+      if (m.id === msgId && m.plan) {
+        return {
+          ...m,
+          plan: {
+            ...m.plan,
+            steps: m.plan.steps.map(s => s.index === stepIndex ? { ...s, status: 'running', stdout: null, stderr: null } : s)
+          }
+        };
+      }
+      return m;
+    }));
+
+    // 2. 找到该步骤
+    const currentMsg = messages.find(m => m.id === msgId);
+    if (!currentMsg || !currentMsg.plan) return;
+    const step = currentMsg.plan.steps.find(s => s.index === stepIndex);
+    if (!step) return;
+
+    const cmdToRun = customCommand !== undefined ? customCommand : step.command;
+
+    try {
+      const res = await runPlanStep(sessionId, {
+        command: cmdToRun,
+        secret_ref: step.secret_ref || undefined,
+        session_id: sessionId,
+      });
+
+      const isSuccess = res.status === 'success' && res.exit_code === 0;
+
+      // 3. 更新该步骤状态与输出
+      setMessages(prev => {
+        const nextMsgs = prev.map(m => {
+          if (m.id === msgId && m.plan) {
+            return {
+              ...m,
+              plan: {
+                ...m.plan,
+                steps: m.plan.steps.map(s => s.index === stepIndex ? { 
+                  ...s, 
+                  status: (isSuccess ? 'success' : 'failed') as any, 
+                  command: cmdToRun,
+                  stdout: res.stdout,
+                  stderr: res.stderr || (res.exit_code !== 0 ? `Exit code: ${res.exit_code}` : '')
+                } : s)
+              }
+            };
+          }
+          return m;
+        });
+
+        // 4. 处理自动执行下一步
+        if (autoNext && isSuccess) {
+          const updatedMsg = nextMsgs.find(m => m.id === msgId);
+          if (updatedMsg && updatedMsg.plan) {
+            const nextPendingStep = updatedMsg.plan.steps.find(s => s.status === 'pending');
+            if (nextPendingStep) {
+              setTimeout(() => {
+                executePlanStep(msgId, nextPendingStep.index, undefined, true);
+              }, 600);
+            } else {
+              showToast('🎉 执行计划中的所有步骤均已成功完成！');
+            }
+          }
+        }
+
+        return nextMsgs;
+      });
+
+    } catch (err: any) {
+      setMessages(prev => prev.map(m => {
+        if (m.id === msgId && m.plan) {
+          return {
+            ...m,
+            plan: {
+              ...m.plan,
+              steps: m.plan.steps.map(s => s.index === stepIndex ? { 
+                ...s, 
+                status: 'failed' as any, 
+                stderr: err.message || '网络连接异常，单步执行失败。' 
+              } : s)
+            }
+          };
+        }
+        return m;
+      }));
+    }
+  };
+
+  const handleSkipStep = (msgId: number, stepIndex: number, autoNext: boolean) => {
+    setMessages(prev => {
+      const nextMsgs = prev.map(m => {
+        if (m.id === msgId && m.plan) {
+          return {
+            ...m,
+            plan: {
+              ...m.plan,
+              steps: m.plan.steps.map(s => s.index === stepIndex ? { ...s, status: 'skipped' as any } : s)
+            }
+          };
+        }
+        return m;
+      });
+
+      if (autoNext) {
+        const updatedMsg = nextMsgs.find(m => m.id === msgId);
+        if (updatedMsg && updatedMsg.plan) {
+          const nextPendingStep = updatedMsg.plan.steps.find(s => s.status === 'pending');
+          if (nextPendingStep) {
+            setTimeout(() => {
+              executePlanStep(msgId, nextPendingStep.index, undefined, true);
+            }, 600);
+          } else {
+            showToast('🎉 执行计划已结束（部分步骤被跳过）。');
+          }
+        }
+      }
+
+      return nextMsgs;
+    });
+  };
 
   const [activeTraceMsgId, setActiveTraceMsgId] = useState<number | null>(() => {
     try {
@@ -285,6 +420,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
         secretRefs: resp.secret_refs_used,
         leakDetected: resp.leak_detected,
         leakedValue: resp.leaked_value,
+        plan: resp.plan,
       };
 
       setMessages(prev => [...prev, emptyAgentMsg]);
@@ -606,6 +742,199 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                       title={hasTools ? '点击在右侧查看此步骤的执行日志' : undefined}
                     >
                       {renderMessageContent(msg.id === 0 ? t('chat.welcome') : msg.text)}
+
+                      {/* 多步骤交互式执行计划 */}
+                      {msg.plan && msg.plan.steps && Array.isArray(msg.plan.steps) && (
+                        <div className="mt-4 p-4 rounded-xl border border-outline-variant/60 bg-surface-container-low text-on-surface shadow-sm space-y-4 text-left" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-between border-b border-outline-variant/30 pb-2.5">
+                            <div className="flex items-center gap-2">
+                              <CalendarClock className="w-4 h-4 text-primary" />
+                              <span className="font-bold text-xs">{isZh ? '复合运维任务步骤执行计划' : 'Composite Operations Task Execution Plan'}</span>
+                            </div>
+                            <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded font-mono font-bold">
+                              {isZh ? '步骤数: ' : 'Steps: '}
+                              {msg.plan.steps.filter(s => s && (s.status === 'success' || s.status === 'skipped')).length} / {msg.plan.steps.length}
+                            </span>
+                          </div>
+
+                          {/* 一键/逐步执行按钮组 */}
+                          {msg.plan.steps.every(s => s && s.status === 'pending') && (
+                            <div className="flex items-center gap-3">
+                              <button
+                                onClick={() => {
+                                  const firstStep = msg.plan?.steps?.[0];
+                                  if (firstStep) executePlanStep(msg.id, firstStep.index, undefined, true);
+                                }}
+                                className="px-3 py-1.5 rounded bg-primary hover:bg-primary/95 text-on-primary text-xs font-semibold shadow-sm flex items-center gap-1 active:scale-95 transition-all"
+                              >
+                                <Play className="w-3.5 h-3.5 fill-current" />
+                                {isZh ? '一键顺序执行' : 'Execute All'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const firstStep = msg.plan?.steps?.[0];
+                                  if (firstStep) executePlanStep(msg.id, firstStep.index, undefined, false);
+                                }}
+                                className="px-3 py-1.5 rounded border border-outline-variant hover:bg-surface-container-high text-on-surface text-xs font-semibold active:scale-95 transition-all"
+                              >
+                                {isZh ? '单步依次执行' : 'Execute step-by-step'}
+                              </button>
+                            </div>
+                          )}
+
+                          {/* 进度步骤列表 */}
+                          <div className="space-y-3">
+                            {msg.plan.steps.map(step => {
+                              const isEditing = editingStepIndex?.msgId === msg.id && editingStepIndex?.stepIndex === step.index;
+                              const isRunning = step.status === 'running';
+                              const isSuccess = step.status === 'success';
+                              const isFailed = step.status === 'failed';
+                              const isSkipped = step.status === 'skipped';
+                              const hasLog = step.stdout || step.stderr;
+
+                              return (
+                                <div 
+                                  key={step.index} 
+                                  className={`rounded-xl border p-3 transition-all ${
+                                    isRunning 
+                                      ? 'border-primary/40 bg-primary/5' 
+                                      : isSuccess 
+                                        ? 'border-green-200 bg-green-500/5' 
+                                        : isFailed 
+                                          ? 'border-red-200 bg-red-500/5' 
+                                          : 'border-outline-variant/30 bg-surface'
+                                  }`}
+                                >
+                                  {/* Step Header */}
+                                  <div className="flex items-center justify-between gap-3 mb-2">
+                                    <div className="flex items-center gap-2">
+                                      {/* Status Circle Icon */}
+                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                                        isRunning 
+                                          ? 'bg-primary text-on-primary' 
+                                          : isSuccess 
+                                            ? 'bg-green-600 text-white' 
+                                            : isFailed 
+                                              ? 'bg-red-600 text-white' 
+                                              : 'bg-surface-container-high text-on-surface-variant'
+                                      }`}>
+                                        {isRunning && <Loader2 className="w-3 h-3 animate-spin" />}
+                                        {isSuccess && '✓'}
+                                        {isFailed && '✗'}
+                                        {isSkipped && '—'}
+                                        {step.status === 'pending' && step.index}
+                                      </div>
+                                      <span className="text-xs font-bold text-on-surface">{step.title}</span>
+                                    </div>
+                                    
+                                    {/* Action items inside step */}
+                                    {step.status === 'pending' && !(msg.plan?.steps || []).some(s => s && s.status === 'running') && (
+                                      <button
+                                        onClick={() => executePlanStep(msg.id, step.index, undefined, false)}
+                                        className="text-[10px] px-2 py-0.5 rounded border border-outline hover:bg-surface-container-high text-on-surface font-semibold"
+                                      >
+                                        {isZh ? '运行此步' : 'Run'}
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* Command Box */}
+                                  <div className="mb-2">
+                                    {isEditing ? (
+                                      <div className="space-y-1.5">
+                                        <textarea
+                                          className="w-full font-mono text-xs bg-zinc-950 text-zinc-100 p-2.5 rounded-lg border border-primary focus:outline-none resize-none min-h-[64px]"
+                                          value={editedCommandText}
+                                          onChange={(e) => setEditedCommandText(e.target.value)}
+                                        />
+                                        <div className="flex items-center gap-2 justify-end">
+                                          <button
+                                            onClick={() => {
+                                              setEditingStepIndex(null);
+                                              executePlanStep(msg.id, step.index, editedCommandText, false);
+                                            }}
+                                            className="px-2 py-1 rounded bg-primary text-on-primary text-[10px] font-semibold"
+                                          >
+                                            {isZh ? '保存并运行' : 'Save & Run'}
+                                          </button>
+                                          <button
+                                            onClick={() => setEditingStepIndex(null)}
+                                            className="px-2 py-1 rounded border border-outline text-[10px]"
+                                          >
+                                            {isZh ? '取消' : 'Cancel'}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="relative group/cmd">
+                                        <pre className="font-mono text-[11px] bg-zinc-950 text-zinc-100 p-2.5 rounded-lg break-all select-all leading-relaxed whitespace-pre-wrap max-h-24 overflow-y-auto">
+                                          <code>{step.command}</code>
+                                        </pre>
+                                        {!isRunning && step.status !== 'success' && (
+                                          <button
+                                            onClick={() => {
+                                              setEditingStepIndex({ msgId: msg.id, stepIndex: step.index });
+                                              setEditedCommandText(step.command);
+                                            }}
+                                            className="absolute right-2 top-2 p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 opacity-0 group-hover/cmd:opacity-100 text-[9px] font-bold"
+                                            title={isZh ? '修改命令' : 'Edit Command'}
+                                          >
+                                            ✏️
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Output Console Logs */}
+                                  {hasLog && (
+                                    <details className="mt-2 bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden select-text text-left">
+                                      <summary className="px-3 py-1 cursor-pointer bg-zinc-900 border-b border-zinc-800 text-[9px] font-mono text-zinc-400 select-none flex items-center justify-between">
+                                        <span>{isZh ? '▶ 展开终端输出日志' : '▶ Expand Terminal Log'}</span>
+                                        <span className={`text-[8px] font-bold uppercase ${isSuccess ? 'text-green-500' : 'text-red-500'}`}>
+                                          {isSuccess ? 'Exit 0' : 'Error'}
+                                        </span>
+                                      </summary>
+                                      <pre className="p-3 font-mono text-[10px] text-zinc-200 leading-normal max-h-48 overflow-y-auto whitespace-pre-wrap break-all">
+                                        {step.stdout && <span className="text-zinc-100">{step.stdout}\n</span>}
+                                        {step.stderr && <span className="text-red-400">{step.stderr}\n</span>}
+                                      </pre>
+                                    </details>
+                                  )}
+
+                                  {/* Error Interaction Options */}
+                                  {isFailed && (
+                                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-outline-variant/20">
+                                      <button
+                                        onClick={() => executePlanStep(msg.id, step.index, step.command, false)}
+                                        className="px-2.5 py-1 rounded bg-red-100 hover:bg-red-200 text-red-700 text-[10px] font-semibold flex items-center gap-1 active:scale-95 transition-all"
+                                      >
+                                        <RefreshCw className="w-3.5 h-3.5" />
+                                        {isZh ? '重新尝试' : 'Retry'}
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setEditingStepIndex({ msgId: msg.id, stepIndex: step.index });
+                                          setEditedCommandText(step.command);
+                                        }}
+                                        className="px-2.5 py-1 rounded border border-outline text-[10px] font-semibold active:scale-95 transition-all"
+                                      >
+                                        ✏️ {isZh ? '编辑命令' : 'Edit'}
+                                      </button>
+                                      <button
+                                        onClick={() => handleSkipStep(msg.id, step.index, false)}
+                                        className="px-2.5 py-1 rounded border border-outline text-[10px] text-on-surface-variant hover:bg-surface-container-high font-semibold active:scale-95 transition-all"
+                                      >
+                                        ⏭️ {isZh ? '跳过步骤' : 'Skip'}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {/* Leaked Secret Alert Banner */}

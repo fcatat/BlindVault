@@ -147,6 +147,23 @@ class AgentRunRequest(BaseModel):
     confirmed: bool = Field(default=False, description="高危操作是否已被用户确认")
 
 
+class TaskPlanStep(BaseModel):
+    """单步执行计划步骤。"""
+    index: int
+    title: str
+    command: str
+    secret_ref: Optional[str] = None
+    status: str = "pending"  # pending | running | success | failed | skipped
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
+
+
+class TaskPlan(BaseModel):
+    """多步骤任务计划。"""
+    id: str
+    steps: list[TaskPlanStep]
+
+
 class AgentRunResponse(BaseModel):
     """Agent 运行响应。"""
     reply: str
@@ -155,7 +172,45 @@ class AgentRunResponse(BaseModel):
     sanitized_input: str = Field(default="", description="脱敏后的用户输入，用于构建安全的对话历史")
     leak_detected: bool = Field(default=False, description="是否检测到敏感信息泄漏至模型")
     leaked_value: Optional[str] = Field(default=None, description="泄漏的敏感明文内容")
-    status: str = Field(default="success", description="执行状态：success | requires_approval | error")
+    status: str = Field(default="success", description="执行状态：success | requires_approval | error | plan_generated")
     requires_approval: bool = Field(default=False, description="是否需要用户确认")
     pending_command: Optional[str] = Field(default=None, description="等待审批的高危命令")
     triggered_rule: Optional[str] = Field(default=None, description="触发的高危拦截规则")
+    plan: Optional[TaskPlan] = Field(default=None, description="多步骤执行计划（若生成）")
+
+
+class RunPlanStepRequest(BaseModel):
+    """单步计划执行请求。"""
+    command: str = Field(..., min_length=1, description="待执行命令")
+    secret_ref: Optional[str] = Field(default=None, description="绑定的凭据引用")
+    session_id: str = Field(..., min_length=1, description="会话 ID")
+
+
+class RunPlanStepResponse(BaseModel):
+    """单步计划执行结果。"""
+    exit_code: int
+    stdout: str
+    stderr: str
+    status: str
+
+
+class ScheduledTaskResponse(BaseModel):
+    """定时/计划任务详情。"""
+    id: str
+    user_id: str
+    session_id: str
+    tenant_id: str
+    label: str
+    command: str
+    secret_ref: Optional[str] = None
+    cron_expression: Optional[str] = None
+    delay_seconds: Optional[int] = None
+    next_run_at: datetime
+    status: str
+    created_at: datetime
+    last_run_at: Optional[datetime] = None
+    last_run_status: Optional[str] = None
+    last_run_output: Optional[str] = None
+
+
+

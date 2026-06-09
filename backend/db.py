@@ -50,6 +50,27 @@ CREATE TABLE IF NOT EXISTS secret_archive (
 CREATE INDEX IF NOT EXISTS idx_secret_archive_user ON secret_archive(user_id);
 """
 
+CREATE_SCHEDULED_TASKS_TABLE = """
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id                  VARCHAR(128) PRIMARY KEY,
+    user_id             VARCHAR(128) NOT NULL,
+    session_id          VARCHAR(128) NOT NULL,
+    tenant_id           VARCHAR(128) NOT NULL DEFAULT 'default',
+    label               VARCHAR(256) NOT NULL,
+    command             TEXT         NOT NULL,
+    secret_ref          VARCHAR(128),
+    cron_expression     VARCHAR(64),
+    delay_seconds       INTEGER,
+    next_run_at         TIMESTAMPTZ  NOT NULL,
+    status              VARCHAR(32)  NOT NULL DEFAULT 'active',
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    last_run_at         TIMESTAMPTZ,
+    last_run_status     VARCHAR(32),
+    last_run_output     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_run ON scheduled_tasks(next_run_at) WHERE status = 'active';
+"""
+
 
 async def init_db(database_url: str) -> None:
     """初始化数据库连接池并建表。"""
@@ -58,7 +79,9 @@ async def init_db(database_url: str) -> None:
     async with _pool.acquire() as conn:
         await conn.execute(CREATE_CONFIG_TABLE)
         await conn.execute(CREATE_SECRET_ARCHIVE_TABLE)
-    logger.info("PostgreSQL 连接成功，blindvault_config / secret_archive 表已就绪")
+        await conn.execute(CREATE_SCHEDULED_TASKS_TABLE)
+    logger.info("PostgreSQL 连接成功，配置表、归档表和定时任务表已就绪")
+
 
 
 async def close_db() -> None:
@@ -272,3 +295,140 @@ async def list_secret_archives(user_id: str) -> list[dict]:
             user_id,
         )
         return [dict(row) for row in rows]
+
+
+# ============================================================
+# 定时任务 (Scheduled Tasks) CRUD
+# ============================================================
+
+async def save_scheduled_task(
+    id: str,
+    user_id: str,
+    session_id: str,
+    tenant_id: str,
+    label: str,
+    command: str,
+    secret_ref: Optional[str],
+    cron_expression: Optional[str],
+    delay_seconds: Optional[int],
+    next_run_at: datetime,
+    status: str = "active",
+) -> None:
+    """保存或更新定时任务。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO scheduled_tasks (
+                id, user_id, session_id, tenant_id, label, command,
+                secret_ref, cron_expression, delay_seconds, next_run_at, status
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+                label = $5, command = $6, secret_ref = $7,
+                cron_expression = $8, delay_seconds = $9,
+                next_run_at = $10, status = $11
+            """,
+            id, user_id, session_id, tenant_id, label, command,
+            secret_ref, cron_expression, delay_seconds, next_run_at, status
+        )
+
+
+async def list_scheduled_tasks(tenant_id: str = "default", user_id: str = None) -> list[dict]:
+    """列出指定租户和用户（可选）的所有定时任务。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        if user_id:
+            rows = await conn.fetch(
+                """
+                SELECT id, user_id, session_id, tenant_id, label, command,
+                       secret_ref, cron_expression, delay_seconds, next_run_at, status,
+                       created_at, last_run_at, last_run_status, last_run_output
+                FROM scheduled_tasks
+                WHERE tenant_id = $1 AND user_id = $2
+                ORDER BY created_at DESC
+                """,
+                tenant_id, user_id
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT id, user_id, session_id, tenant_id, label, command,
+                       secret_ref, cron_expression, delay_seconds, next_run_at, status,
+                       created_at, last_run_at, last_run_status, last_run_output
+                FROM scheduled_tasks
+                WHERE tenant_id = $1
+                ORDER BY created_at DESC
+                """,
+                tenant_id
+            )
+        return [dict(row) for row in rows]
+
+
+async def get_scheduled_task(task_id: str) -> Optional[dict]:
+    """获取指定任务详情。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id, user_id, session_id, tenant_id, label, command,
+                   secret_ref, cron_expression, delay_seconds, next_run_at, status,
+                   created_at, last_run_at, last_run_status, last_run_output
+            FROM scheduled_tasks
+            WHERE id = $1
+            """,
+            task_id
+        )
+        return dict(row) if row else None
+
+
+async def update_scheduled_task_status(task_id: str, status: str) -> None:
+    """更新任务状态（如 active, paused, cancelled）。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE scheduled_tasks SET status = $1 WHERE id = $2",
+            status, task_id
+        )
+
+
+async def update_scheduled_task_after_run(
+    task_id: str,
+    last_run_at: datetime,
+    last_run_status: str,
+    last_run_output: str,
+    next_run_at: datetime,
+    status: str = None,
+) -> None:
+    """任务执行完毕后更新其日志、下次执行时间与状态。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        if status:
+            await conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET last_run_at = $1, last_run_status = $2, last_run_output = $3,
+                    next_run_at = $4, status = $5
+                WHERE id = $6
+                """,
+                last_run_at, last_run_status, last_run_output, next_run_at, status, task_id
+            )
+        else:
+            await conn.execute(
+                """
+                UPDATE scheduled_tasks
+                SET last_run_at = $1, last_run_status = $2, last_run_output = $3,
+                    next_run_at = $4
+                WHERE id = $5
+                """,
+                last_run_at, last_run_status, last_run_output, next_run_at, task_id
+            )
+
+
+async def delete_scheduled_task(task_id: str) -> None:
+    """从数据库物理删除定时任务。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM scheduled_tasks WHERE id = $1", task_id)
+
+

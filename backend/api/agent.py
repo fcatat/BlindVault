@@ -16,10 +16,11 @@ import logging
 from fastapi import APIRouter, Header, HTTPException
 
 from backend.agent.graph import run_agent
-from backend.models import AgentRunRequest, AgentRunResponse
+from backend.models import AgentRunRequest, AgentRunResponse, RunPlanStepRequest, RunPlanStepResponse, ExecutionContext
 from backend.redis_store import get_store
 from backend.sanitizer import sanitize_message, detect_leaked_secrets
 from backend.config import get_settings
+from backend.tools.secure_shell import secure_shell
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +94,39 @@ async def agent_run(
     result["leaked_value"] = leaked
 
     return AgentRunResponse(**result)
+
+
+@router.post("/run_plan_step", response_model=RunPlanStepResponse)
+async def agent_run_plan_step(
+    req: RunPlanStepRequest,
+    x_user_id: str = Header(..., alias="X-User-Id"),
+    x_tenant_id: str = Header("default", alias="X-Tenant-Id"),
+):
+    """
+    单步直接执行计划里的某一步骤。
+    解密安全引用，替换 $SECRET 占位符后，在沙箱运行并脱敏返回结果。
+    """
+    store = await get_store()
+
+    # 构造执行上下文
+    ctx = ExecutionContext(
+        user_id=x_user_id,
+        session_id=req.session_id,
+        tenant_id=x_tenant_id,
+        tool_name="secure_shell",
+    )
+
+    # 执行命令
+    res = await secure_shell(
+        command=req.command,
+        secret_ref=req.secret_ref,
+        store=store,
+        ctx=ctx,
+    )
+
+    return RunPlanStepResponse(
+        exit_code=res.get("exit_code", -1),
+        stdout=res.get("stdout", ""),
+        stderr=res.get("stderr", "") or res.get("reason", ""),
+        status=res.get("status", "error"),
+    )

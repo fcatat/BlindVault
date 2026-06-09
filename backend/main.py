@@ -64,6 +64,27 @@ def _register_tools() -> None:
     except ImportError:
         logging.getLogger(__name__).warning("secure_shell 工具未就绪，跳过注册")
 
+    # 注册步骤规划与计划任务工具
+    from backend.tools.task_plans import (
+        GENERATE_TASK_PLAN_SCHEMA,
+        CREATE_SCHEDULED_TASK_SCHEMA,
+        generate_task_plan,
+        create_scheduled_task_tool,
+    )
+    register_tool(
+        name="generate_task_plan",
+        description="用于多步骤、复合的复杂运维任务步骤拆解规划。AI 将先输出执行步骤，等待用户核对或手动执行。",
+        parameters=GENERATE_TASK_PLAN_SCHEMA,
+        func=generate_task_plan,
+    )
+    register_tool(
+        name="create_scheduled_task",
+        description="在后台创建并安排定时/周期性 Cron 任务或单次延迟任务。密码位置请在 command 里用 $SECRET 占位，并传入 secret_ref 参数。",
+        parameters=CREATE_SCHEDULED_TASK_SCHEMA,
+        func=create_scheduled_task_tool,
+    )
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -100,12 +121,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Redis 连接失败: %s", str(e))
 
+    # 启动定时任务调度器 Worker
+    from backend.scheduler import start_scheduler
+    start_scheduler()
+    logger.info("定时任务后台 Worker 启动成功")
+
     yield
 
     # 关闭资源
     logger.info("BlindVault 关闭中...")
+    
+    # 停止定时任务调度器 Worker
+    from backend.scheduler import stop_scheduler
+    await stop_scheduler()
+
     await close_redis()
     await close_db()
+
 
 
 # ============================================================
@@ -134,15 +166,16 @@ app.add_middleware(
 # 日志脱敏
 app.add_middleware(RedactionMiddleware)
 
-# ---- 路由 ----
-
 from backend.api.secrets import router as secrets_router
 from backend.api.agent import router as agent_router
 from backend.api.config import router as config_router
+from backend.api.tasks import router as tasks_router
 
 app.include_router(secrets_router)
 app.include_router(agent_router)
 app.include_router(config_router)
+app.include_router(tasks_router)
+
 
 
 @app.get("/api/ee/status", tags=["system"])
