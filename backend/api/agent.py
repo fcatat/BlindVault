@@ -64,12 +64,12 @@ async def agent_run(
             len(auto_created_refs),
         )
 
-    # ---- 安全防护策略检测 (严格模式阻断) ----
+    # ---- 安全防护策略检测：任何包含未加密明文凭证的操作，统统进行硬拦截阻断 ----
     leaked = detect_leaked_secrets(sanitized_message)
-    if leaked is not None and get_settings().safety_policy_mode == "strict":
+    if leaked is not None:
         raise HTTPException(
             status_code=400,
-            detail=f"检测到疑似明文凭证数据（{leaked}）外泄！在严格阻断模式下该指令已被拦截，请在凭证库中录入凭据并使用安全引用。"
+            detail=f"检测到疑似明文凭证数据（{leaked}）外泄！为了系统安全，该指令已被拦截。请在凭证库中录入凭据并使用安全引用。"
         )
 
     # ---- 调用 Agent（使用已脱敏的消息）----

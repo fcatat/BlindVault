@@ -60,7 +60,6 @@ export function AgentConfig() {
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
-  const [safetyPolicyMode, setSafetyPolicyMode] = useState('lax');
   const [showPrompt, setShowPrompt] = useState(false);
 
   // Agent 闭环安全与熔断决策
@@ -94,7 +93,6 @@ export function AgentConfig() {
       setProvider(cfg.llm_provider);
       setModel(cfg.llm_model);
       setBaseUrl(cfg.llm_base_url);
-      setSafetyPolicyMode(cfg.safety_policy_mode || 'lax');
       setApiKey(''); // API Key 不回传
 
       // 绑定后端传来的运行策略
@@ -149,7 +147,6 @@ export function AgentConfig() {
         llm_model: model.trim(),
         llm_base_url: baseUrl.trim(),
         llm_api_key: apiKey, // 空串 = 不更新
-        safety_policy_mode: safetyPolicyMode,
         agent_max_retries: agentMaxRetries,
         agent_approval_required: agentApprovalRequired,
       });
@@ -309,44 +306,6 @@ export function AgentConfig() {
         </div>
       </div>
 
-      {/* Safety Policy Mode Toggle */}
-      <div className="mb-8">
-        <label className="block text-sm font-label text-on-surface-variant font-medium mb-3">{t('config.safetyPolicyMode')}</label>
-        <div className="grid grid-cols-2 gap-4">
-          <button
-            onClick={() => setSafetyPolicyMode('lax')}
-            className={`panel rounded-xl p-5 text-left transition-all duration-200 active:scale-[0.99] ${
-              safetyPolicyMode === 'lax' ? 'ring-2 ring-primary border-primary shadow-md' : 'hover:border-outline'
-            }`}
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${safetyPolicyMode === 'lax' ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-on-surface-variant'}`}>
-                <Info className="w-4 h-4" />
-              </div>
-              <span className={`text-sm font-semibold ${safetyPolicyMode === 'lax' ? 'text-primary' : 'text-on-surface'}`}>{t('config.laxMode')}</span>
-            </div>
-            <p className="text-xs text-on-surface-variant leading-relaxed">
-              {t('config.laxModeDesc')}
-            </p>
-          </button>
-          <button
-            onClick={() => setSafetyPolicyMode('strict')}
-            className={`panel rounded-xl p-5 text-left transition-all duration-200 active:scale-[0.99] ${
-              safetyPolicyMode === 'strict' ? 'ring-2 ring-primary border-primary shadow-md' : 'hover:border-outline'
-            }`}
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${safetyPolicyMode === 'strict' ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-on-surface-variant'}`}>
-                <ShieldCheck className="w-4 h-4" />
-              </div>
-              <span className={`text-sm font-semibold ${safetyPolicyMode === 'strict' ? 'text-primary' : 'text-on-surface'}`}>{t('config.strictMode')}</span>
-            </div>
-            <p className="text-xs text-on-surface-variant leading-relaxed">
-              {t('config.strictModeDesc')}
-            </p>
-          </button>
-        </div>
-      </div>
 
       {/* OpenAI Config Form */}
       <div className={`space-y-6 transition-all duration-300 ${isOpenAI ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>

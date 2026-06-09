@@ -32,7 +32,6 @@ class LLMConfigResponse(BaseModel):
     llm_model: str
     llm_base_url: str
     has_api_key: bool  # 只告知是否已配置，不返回明文
-    safety_policy_mode: str
     system_prompt: str
     # 企业版：本地模型网关
     local_model_url: str = ""
@@ -53,7 +52,6 @@ class LLMConfigUpdate(BaseModel):
     llm_model: str
     llm_base_url: str = ""
     llm_api_key: str = ""  # 空串 = 不更新
-    safety_policy_mode: str = "lax"
     # 企业版：本地模型网关
     local_model_url: str | None = None      # None = 不更新
     local_model_name: str | None = None
@@ -76,7 +74,6 @@ async def get_config():
         llm_model=settings.llm_model,
         llm_base_url=settings.llm_base_url,
         has_api_key=bool(settings.llm_api_key),
-        safety_policy_mode=settings.safety_policy_mode,
         system_prompt=SYSTEM_PROMPT,
         local_model_url=settings.local_model_url,
         local_model_name=settings.local_model_name,
@@ -105,7 +102,6 @@ async def update_config(payload: LLMConfigUpdate):
     settings.llm_provider = payload.llm_provider
     settings.llm_model = payload.llm_model
     settings.llm_base_url = payload.llm_base_url
-    settings.safety_policy_mode = payload.safety_policy_mode
 
     if payload.llm_api_key:
         settings.llm_api_key = payload.llm_api_key
@@ -138,7 +134,6 @@ async def update_config(payload: LLMConfigUpdate):
             base_url=settings.llm_base_url,
             api_key=payload.llm_api_key,  # 空串不会覆盖已有 key
             encryption_key=settings.encryption_key_bytes,
-            safety_policy_mode=settings.safety_policy_mode,
             local_model_url=settings.local_model_url,
             local_model_name=settings.local_model_name,
             local_model_timeout=settings.local_model_timeout,
@@ -153,12 +148,11 @@ async def update_config(payload: LLMConfigUpdate):
         logger.exception("配置持久化失败，但内存中已更新")
 
     logger.info(
-        "LLM 配置已更新: provider=%s, model=%s, base_url=%s, has_key=%s, safety_policy_mode=%s",
+        "LLM 配置已更新: provider=%s, model=%s, base_url=%s, has_key=%s",
         settings.llm_provider,
         settings.llm_model,
         settings.llm_base_url or "(empty)",
         bool(settings.llm_api_key),
-        settings.safety_policy_mode,
     )
 
     return LLMConfigResponse(
@@ -166,7 +160,6 @@ async def update_config(payload: LLMConfigUpdate):
         llm_model=settings.llm_model,
         llm_base_url=settings.llm_base_url,
         has_api_key=bool(settings.llm_api_key),
-        safety_policy_mode=settings.safety_policy_mode,
         system_prompt=SYSTEM_PROMPT,
         local_model_url=settings.local_model_url,
         local_model_name=settings.local_model_name,

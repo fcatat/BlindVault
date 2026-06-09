@@ -123,7 +123,6 @@ async def save_llm_config(
     base_url: str,
     api_key: str,
     encryption_key: bytes,
-    safety_policy_mode: str,
     local_model_url: str = "",
     local_model_name: str = "qwen3:0.6b",
     local_model_timeout: float = 2.0,
@@ -142,7 +141,6 @@ async def save_llm_config(
     await save_config("llm_provider", provider)
     await save_config("llm_model", model)
     await save_config("llm_base_url", base_url)
-    await save_config("safety_policy_mode", safety_policy_mode)
     await save_config("local_model_url", local_model_url)
     await save_config("local_model_name", local_model_name)
     await save_config("local_model_timeout", str(local_model_timeout))
@@ -165,14 +163,14 @@ async def load_llm_config(encryption_key: bytes) -> dict[str, any]:
     从 PostgreSQL 加载 LLM 配置。
 
     Returns:
-        {"llm_provider": ..., "llm_model": ..., "llm_base_url": ..., "llm_api_key": ..., "safety_policy_mode": ...}
+        {"llm_provider": ..., "llm_model": ..., "llm_base_url": ..., "llm_api_key": ...}
         缺失的字段不包含在字典中。
     """
     all_cfg = await load_all_config()
     result: dict[str, any] = {}
 
     for key in (
-        "llm_provider", "llm_model", "llm_base_url", "safety_policy_mode",
+        "llm_provider", "llm_model", "llm_base_url",
         "local_model_url", "local_model_name", "local_model_api_type", "local_model_prompt",
         "agent_high_risk_commands"
     ):

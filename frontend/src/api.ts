@@ -149,7 +149,6 @@ export interface LLMConfig {
   llm_model: string;
   llm_base_url: string;
   has_api_key: boolean;
-  safety_policy_mode: string;
   system_prompt: string;
   // 企业版：本地模型网关
   local_model_url: string;
@@ -169,7 +168,6 @@ export interface LLMConfigUpdate {
   llm_model: string;
   llm_base_url: string;
   llm_api_key: string;
-  safety_policy_mode: string;
   // 企业版：本地模型网关
   local_model_url?: string;
   local_model_name?: string;
