@@ -985,7 +985,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                                     <span className="text-secondary shrink-0">{k}:</span>
                                     <span className={`break-all ${v === '[REDACTED]' ? 'text-tertiary font-semibold flex items-center gap-1' : ''}`}>
                                       {v === '[REDACTED]' && <Lock className="w-3 h-3 inline" />}
-                                      {v}
+                                      {typeof v === 'object' ? JSON.stringify(v) : String(v)}
                                     </span>
                                   </div>
                                 ))}
