@@ -111,11 +111,13 @@ def _mock_chatbot(state: AgentState) -> dict:
     规则：
     - 消息包含 "login" / "登录" + secret_ref → 构造 browser_login_mock
     - 消息包含 "cron" / "every" / "定时" / "每天" → 构造 create_scheduled_task
+    - 消息包含 "nginx" / "docker" / "镜像" / "自愈" → 自动生成带错命令并在失败时自主纠错重试
     - 消息包含 "plan" / "步骤" / "部署" / "复合" → 构造 generate_task_plan
     - 否则 → 文本回复
     """
     messages = state["messages"]
     last_msg = messages[-1]
+    loop_count = state.get("loop_count", 0)
 
     content = ""
     if hasattr(last_msg, "content"):
@@ -124,12 +126,48 @@ def _mock_chatbot(state: AgentState) -> dict:
     # 检测是否是工具执行结果返回
     from langchain_core.messages import ToolMessage
     if isinstance(last_msg, ToolMessage):
-        # 工具已执行完毕，生成最终回复
-        return {
-            "messages": [
-                AIMessage(content=f"工具执行完毕。结果：{last_msg.content}")
-            ]
-        }
+        # 自动分析是否有前置失败的 docker run 步骤，如果有则启动自愈重试逻辑
+        is_nginx_fail = "nginx-test" in str(messages[-2].tool_calls) if len(messages) >= 2 and hasattr(messages[-2], "tool_calls") and messages[-2].tool_calls else False
+        
+        if is_nginx_fail and loop_count == 1:
+            # 第一轮失败，大模型自主识别报错，修正参数，重新尝试
+            return {
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "⚠️ **Agent 自动纠错与自愈执行**：\n"
+                            "前置部署命令由于无效参数 `--invalid-flag` 运行失败。\n\n"
+                            "**[报错原因分析]**：Docker CLI 不支持 `--invalid-flag` 标志参数，导致进程异常终止退出（Exit Code 125）。\n"
+                            "**[自主修复策略]**：我已自动为您剔除无效参数，并更改使用稳定指令 `docker run -d -p 8888:80 --name nginx-test nginx:alpine` 重新提交沙箱执行尝试！"
+                        ),
+                        tool_calls=[
+                            {
+                                "id": f"call_{uuid.uuid4().hex[:8]}",
+                                "name": "secure_shell",
+                                "args": {
+                                    "command": "docker run -d -p 8888:80 --name nginx-test nginx:alpine"
+                                }
+                            }
+                        ]
+                    )
+                ]
+            }
+        else:
+            # 无论之前的工具调用是什么，如果运行成功，或者是重试后的最终结果
+            return {
+                "messages": [
+                    AIMessage(
+                        content=(
+                            "🎉 **运维部署成功**！命令已在安全隔离的沙箱环境内运行完毕。\n\n"
+                            "**[最终执行结果]**：\n"
+                            "```bash\n"
+                            "88b901a2432a514d2e8ab5df62002fcf650b8123... (Container ID)\n"
+                            "```\n"
+                            "**[服务运行状态]**：自愈重试部署成功！目前 Nginx 容器已正常在后台映射端口 `8888` 运行。"
+                        )
+                    )
+                ]
+            }
 
     # 定时任务关键词匹配
     is_cron = bool(re.search(r"cron|every|定时|每天|每10秒", content, re.IGNORECASE))
@@ -154,6 +192,26 @@ def _mock_chatbot(state: AgentState) -> dict:
                                 "label": "定时任务执行",
                                 "cron_expression": expr,
                                 "secret_ref": secret_refs[0] if secret_refs else None
+                            }
+                        }
+                    ]
+                )
+            ]
+        }
+
+    # 自主纠错重试演示场景匹配
+    is_nginx_test = bool(re.search(r"nginx|docker|镜像|跑起来|纠错|自愈|测试", content, re.IGNORECASE))
+    if is_nginx_test:
+        return {
+            "messages": [
+                AIMessage(
+                    content="收到部署请求。我将首先尝试拉取镜像并部署 Nginx 服务...",
+                    tool_calls=[
+                        {
+                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                            "name": "secure_shell",
+                            "args": {
+                                "command": "docker run -d -p 8888:80 --name nginx-test --invalid-flag nginx:alpine"
                             }
                         }
                     ]
