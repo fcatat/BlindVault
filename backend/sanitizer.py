@@ -43,7 +43,8 @@ class SensitiveMatch:
     value_end: int
 
 
-# 默认的内置敏感字段匹配规则
+# 默认的内置敏感字段匹配规则（精简版：仅保留最核心的密码识别）
+# token / api_key 等更复杂的场景由企业版本地模型语义识别覆盖
 DEFAULT_PATTERNS = [
     {
         "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|(?:设置|改|设|修改|更改|改成|设成)(?:为|成)\s*|\s+)([^\s,，。；;、\n\r]+)',
@@ -54,16 +55,6 @@ DEFAULT_PATTERNS = [
         "pattern": r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+is\s+|\s+)([^\s,，。；;、\n\r]+)',
         "secret_type": "password",
         "label": "password",
-    },
-    {
-        "pattern": r'(?:token|令牌|access_token|bearer)(?:\s*[:：=是为]\s*|\s+)([^\s,，。；;、\n\r]+)',
-        "secret_type": "token",
-        "label": "token",
-    },
-    {
-        "pattern": r'(?:api[_\-\s]?key|apikey|秘钥)(?:\s*[:：=是为]\s*|\s+)([^\s,，。；;、\n\r]+)',
-        "secret_type": "api_key",
-        "label": "api_key",
     },
 ]
 
@@ -180,6 +171,9 @@ async def detect_secrets(message: str) -> list[SensitiveMatch]:
                 val_end = m.end(0)
 
             if len(value) < 3:
+                continue
+            # 跳过已经是 secret 引用的值（用户已手动替换为凭据引用）
+            if value.startswith("{{secret:") or value.startswith("sec_live_") or value.startswith("sec_test_"):
                 continue
             skip_words = ('是什么', '是多少', '是啥', '多少', '什么', '忘了', '忘记了', 'what', 'is', 'the', 'my')
             if value.lower() in skip_words:
