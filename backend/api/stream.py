@@ -169,8 +169,15 @@ async def agent_stream(
             final_triggered_rule = ""
 
             # 使用 astream_events 逐步推送
+            # 注意：LangGraph 的 on_tool_start/on_tool_end 只对 LangChain 原生工具生效，
+            # 对我们的自定义 secure_tool_node 不生效。
+            # 因此需要从 on_chain_end 的节点输出中提取工具调用信息。
+            thinking_buffer = ""  # token 累积缓冲
+            thinking_flush_count = 0
+
             async for event in graph.astream_events(initial_state, version="v2"):
                 event_kind = event.get("event", "")
+                event_name = event.get("name", "")
 
                 if event_kind == "on_chat_model_stream":
                     # LLM token 流
@@ -178,56 +185,67 @@ async def agent_stream(
                     if chunk and hasattr(chunk, "content") and chunk.content:
                         token_data = {"content": chunk.content}
                         yield _sse_event("thinking", token_data)
-                        await save_agent_task_step(task_id, step_index, "thinking",
-                                                   json.dumps(token_data, ensure_ascii=False))
-                        step_index += 1
-
-                elif event_kind == "on_tool_start":
-                    tool_name = event.get("name", "unknown")
-                    tool_input = event.get("data", {}).get("input", {})
-                    tool_start_data = {
-                        "tool": tool_name,
-                        "args": _redact_tool_args(tool_input) if isinstance(tool_input, dict) else {},
-                    }
-                    yield _sse_event("tool_start", tool_start_data)
-                    await save_agent_task_step(task_id, step_index, "tool_start",
-                                               json.dumps(tool_start_data, ensure_ascii=False))
-                    step_index += 1
-
-                elif event_kind == "on_tool_end":
-                    tool_name = event.get("name", "unknown")
-                    tool_output = event.get("data", {}).get("output")
-                    # 将 ToolMessage content 解析为 dict
-                    output_data = {}
-                    if tool_output:
-                        if hasattr(tool_output, "content"):
-                            try:
-                                output_data = json.loads(tool_output.content)
-                            except (json.JSONDecodeError, TypeError):
-                                output_data = {"raw": str(tool_output.content)[:500]}
-                        else:
-                            output_data = {"raw": str(tool_output)[:500]}
-
-                    safe_output = redact_sensitive_fields(output_data) if isinstance(output_data, dict) else output_data
-                    tool_end_data = {"tool": tool_name, "result": safe_output}
-                    yield _sse_event("tool_end", tool_end_data)
-                    await save_agent_task_step(task_id, step_index, "tool_end",
-                                               json.dumps(tool_end_data, ensure_ascii=False))
-                    step_index += 1
-
-                    # 记录工具调用信息
-                    final_tool_calls.append({
-                        "tool": tool_name,
-                        "args": _redact_tool_args(
-                            event.get("data", {}).get("input", {})
-                            if isinstance(event.get("data", {}).get("input"), dict) else {}
-                        ),
-                    })
+                        # 降低持久化频率：每 10 个 token 批量写一次
+                        thinking_buffer += chunk.content
+                        thinking_flush_count += 1
+                        if thinking_flush_count >= 10:
+                            await save_agent_task_step(
+                                task_id, step_index, "thinking",
+                                json.dumps({"content": thinking_buffer}, ensure_ascii=False))
+                            step_index += 1
+                            thinking_buffer = ""
+                            thinking_flush_count = 0
 
                 elif event_kind == "on_chain_end":
-                    # 检查最终状态中的审批/熔断信号
                     output = event.get("data", {}).get("output", {})
-                    if isinstance(output, dict):
+
+                    # —— 从 chatbot 节点输出中提取 tool_calls → 发送 tool_start ——
+                    if isinstance(output, dict) and "messages" in output:
+                        from langchain_core.messages import AIMessage, ToolMessage as LCToolMessage
+                        for msg in output["messages"]:
+                            # chatbot 返回的 AIMessage 带 tool_calls → tool_start
+                            if isinstance(msg, AIMessage) and msg.tool_calls:
+                                for tc in msg.tool_calls:
+                                    tool_start_data = {
+                                        "tool": tc["name"],
+                                        "args": _redact_tool_args(tc.get("args", {})),
+                                    }
+                                    yield _sse_event("tool_start", tool_start_data)
+                                    await save_agent_task_step(
+                                        task_id, step_index, "tool_start",
+                                        json.dumps(tool_start_data, ensure_ascii=False))
+                                    step_index += 1
+
+                            # secure_tools 节点返回的 ToolMessage → tool_end
+                            if isinstance(msg, LCToolMessage):
+                                tool_content = msg.content or ""
+                                output_data = {}
+                                try:
+                                    output_data = json.loads(tool_content)
+                                except (json.JSONDecodeError, TypeError):
+                                    output_data = {"raw": str(tool_content)[:500]}
+
+                                safe_output = redact_sensitive_fields(output_data) if isinstance(output_data, dict) else output_data
+                                # 尝试从 ToolMessage 的 name 属性获取工具名
+                                tool_name = getattr(msg, "name", None) or "secure_shell"
+                                tool_end_data = {"tool": tool_name, "result": safe_output}
+                                yield _sse_event("tool_end", tool_end_data)
+                                await save_agent_task_step(
+                                    task_id, step_index, "tool_end",
+                                    json.dumps(tool_end_data, ensure_ascii=False))
+                                step_index += 1
+
+                                # 记录 tool_calls 供最终 done 事件使用
+                                final_tool_calls.append({
+                                    "tool": tool_name,
+                                    "args": safe_output.get("command", "") if isinstance(safe_output, dict) else {},
+                                })
+
+                            # 提取最终回复
+                            if isinstance(msg, AIMessage) and msg.content:
+                                final_reply = msg.content
+
+                        # 检查审批/熔断信号
                         if output.get("requires_approval"):
                             final_requires_approval = True
                             final_pending_command = output.get("pending_command", "")
@@ -239,16 +257,17 @@ async def agent_stream(
                                 "triggered_rule": final_triggered_rule,
                             }
                             yield _sse_event("approval_required", approval_data)
-                            await save_agent_task_step(task_id, step_index, "approval_required",
-                                                       json.dumps(approval_data, ensure_ascii=False))
+                            await save_agent_task_step(
+                                task_id, step_index, "approval_required",
+                                json.dumps(approval_data, ensure_ascii=False))
                             step_index += 1
 
-                        # 提取最终回复
-                        messages = output.get("messages", [])
-                        from langchain_core.messages import AIMessage
-                        for msg in messages:
-                            if isinstance(msg, AIMessage) and msg.content:
-                                final_reply = msg.content
+            # 刷写剩余的 thinking buffer
+            if thinking_buffer:
+                await save_agent_task_step(
+                    task_id, step_index, "thinking",
+                    json.dumps({"content": thinking_buffer}, ensure_ascii=False))
+                step_index += 1
 
             # 检查熔断
             if "[安全熔断" in final_reply:
