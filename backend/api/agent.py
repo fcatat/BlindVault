@@ -86,22 +86,8 @@ async def agent_run(
             len(auto_created_refs),
         )
 
-    # ---- 历史消息预处理：对 history 中的 user 消息做脱敏保护，防止历史明文进入大模型 ----
-    sanitized_history = []
-    for h in req.history:
-        if h.get("role") == "user":
-            h_sanitized, h_refs = await sanitize_message(
-                message=h.get("content", ""),
-                store=store,
-                user_id=x_user_id,
-                session_id=session_id,
-                tenant_id=x_tenant_id,
-            )
-            sanitized_history.append({"role": "user", "content": h_sanitized})
-            if h_refs:
-                auto_created_refs.extend(h_refs)
-        else:
-            sanitized_history.append(h)
+    # ---- 历史消息直接透传（前端发送的 history 已是脱敏后的 sanitizedText，无需二次脱敏）----
+    sanitized_history = req.history
 
     # ---- 安全防护策略检测：旁路审计明文凭证外泄（不作拦截，仅记录以备后续警告） ----
     leaked = detect_leaked_secrets(sanitized_message)

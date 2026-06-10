@@ -498,6 +498,8 @@ async def save_agent_task_step(
     data: str,
 ) -> None:
     """保存 Agent 任务的单步执行记录。data 为 JSON 字符串。"""
+    # PostgreSQL text/jsonb 不支持 \u0000 null 字节，LLM 输出偶尔包含
+    clean_data = data.replace("\x00", "") if data else data
     pool = _get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
@@ -505,7 +507,7 @@ async def save_agent_task_step(
             INSERT INTO agent_task_steps (task_id, step_index, step_type, data)
             VALUES ($1, $2, $3, $4::jsonb)
             """,
-            task_id, step_index, step_type, data,
+            task_id, step_index, step_type, clean_data,
         )
 
 
@@ -517,6 +519,9 @@ async def finish_agent_task(
     error_message: str = "",
 ) -> None:
     """标记 Agent 任务完成（成功或失败）。"""
+    # 清理 null 字节
+    final_reply = final_reply.replace("\x00", "") if final_reply else final_reply
+    error_message = error_message.replace("\x00", "") if error_message else error_message
     pool = _get_pool()
     async with pool.acquire() as conn:
         await conn.execute(

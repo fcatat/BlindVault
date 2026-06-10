@@ -70,87 +70,74 @@ async def agent_stream(
     async def event_generator() -> AsyncGenerator[str, None]:
         task_id = f"atask_{uuid.uuid4().hex[:16]}"
         step_index = 0
-        store = await get_store()
-        settings = get_settings()
 
-        # 解析历史消息
         try:
-            parsed_history = json.loads(history)
-        except json.JSONDecodeError:
-            parsed_history = []
+            store = await get_store()
+            settings = get_settings()
 
-        # ---- Step 0: 开源版凭证预检测拦截 ----
-        local_model_configured = bool(settings.local_model_url)
-        if not local_model_configured:
-            matches = await detect_secrets(message)
-            if matches:
-                first_match = matches[0]
-                from backend.ee import is_ee_enabled
-                block_data = {
-                    "reply": "检测到明文凭证，为了系统安全，该指令已被拦截。请到凭证库录入后使用安全引用。",
-                    "credential_detected": True,
-                    "detected_credential_type": first_match.secret_type,
-                    "local_model_configured": False,
-                    "is_ee": is_ee_enabled(),
-                }
-                yield _sse_event("credential_blocked", block_data)
-                yield _sse_event("done", block_data)
-                return
+            # 解析历史消息
+            try:
+                parsed_history = json.loads(history)
+            except json.JSONDecodeError:
+                parsed_history = []
 
-        # ---- Step 1: 消息脱敏 ----
-        sanitized_message, auto_created_refs = await sanitize_message(
-            message=message,
-            store=store,
-            user_id=x_user_id,
-            session_id=session_id,
-            tenant_id=x_tenant_id,
-        )
+            # ---- Step 0: 开源版凭证预检测拦截 ----
+            local_model_configured = bool(settings.local_model_url)
+            if not local_model_configured:
+                matches = await detect_secrets(message)
+                if matches:
+                    first_match = matches[0]
+                    from backend.ee import is_ee_enabled
+                    block_data = {
+                        "reply": "检测到明文凭证，为了系统安全，该指令已被拦截。请到凭证库录入后使用安全引用。",
+                        "credential_detected": True,
+                        "detected_credential_type": first_match.secret_type,
+                        "local_model_configured": False,
+                        "is_ee": is_ee_enabled(),
+                    }
+                    yield _sse_event("credential_blocked", block_data)
+                    yield _sse_event("done", block_data)
+                    return
 
-        # 历史消息脱敏
-        sanitized_history = []
-        for h in parsed_history:
-            if h.get("role") == "user":
-                h_sanitized, h_refs = await sanitize_message(
-                    message=h.get("content", ""),
-                    store=store,
-                    user_id=x_user_id,
-                    session_id=session_id,
-                    tenant_id=x_tenant_id,
-                )
-                sanitized_history.append({"role": "user", "content": h_sanitized})
-                if h_refs:
-                    auto_created_refs.extend(h_refs)
-            else:
-                sanitized_history.append(h)
+            # ---- Step 1: 消息脱敏 ----
+            sanitized_message, auto_created_refs = await sanitize_message(
+                message=message,
+                store=store,
+                user_id=x_user_id,
+                session_id=session_id,
+                tenant_id=x_tenant_id,
+            )
 
-        # 审计层检测
-        leaked = detect_leaked_secrets(sanitized_message)
+            # 历史消息直接透传（前端发送的 history 已是脱敏后的 sanitizedText，无需二次脱敏）
+            sanitized_history = parsed_history
 
-        # 持久化任务记录
-        await create_agent_task(
-            task_id=task_id,
-            user_id=x_user_id,
-            session_id=session_id,
-            tenant_id=x_tenant_id,
-            user_message=message,
-            sanitized_message=sanitized_message,
-        )
+            # 审计层检测
+            leaked = detect_leaked_secrets(sanitized_message)
 
-        # 推送脱敏完成事件
-        sanitized_event_data = {
-            "sanitized_input": sanitized_message,
-            "auto_refs": auto_created_refs,
-            "task_id": task_id,
-            "leak_detected": bool(leaked),
-            "leaked_value": leaked[0] if leaked else None,
-        }
-        yield _sse_event("sanitized", sanitized_event_data)
-        await save_agent_task_step(task_id, step_index, "sanitized",
-                                   json.dumps(sanitized_event_data, ensure_ascii=False))
-        step_index += 1
+            # 持久化任务记录
+            await create_agent_task(
+                task_id=task_id,
+                user_id=x_user_id,
+                session_id=session_id,
+                tenant_id=x_tenant_id,
+                user_message=message,
+                sanitized_message=sanitized_message,
+            )
 
-        # ---- Step 2: 构建 Graph 并流式执行 ----
-        try:
+            # 推送脱敏完成事件
+            sanitized_event_data = {
+                "sanitized_input": sanitized_message,
+                "auto_refs": auto_created_refs,
+                "task_id": task_id,
+                "leak_detected": bool(leaked),
+                "leaked_value": leaked[0] if leaked else None,
+            }
+            yield _sse_event("sanitized", sanitized_event_data)
+            await save_agent_task_step(task_id, step_index, "sanitized",
+                                       json.dumps(sanitized_event_data, ensure_ascii=False))
+            step_index += 1
+
+            # ---- Step 2: 构建 Graph 并流式执行 ----
             graph, initial_state = prepare_agent_state(
                 user_message=sanitized_message,
                 store=store,
@@ -174,10 +161,19 @@ async def agent_stream(
             # 因此需要从 on_chain_end 的节点输出中提取工具调用信息。
             thinking_buffer = ""  # token 累积缓冲
             thinking_flush_count = 0
+            import time as _time
+            stream_start_time = _time.monotonic()
+            STREAM_TOTAL_TIMEOUT = 300  # 总超时 5 分钟
 
             async for event in graph.astream_events(initial_state, version="v2"):
+                # 总超时保护：防止 sandbox 卡死导致 SSE 流永远挂起
+                if _time.monotonic() - stream_start_time > STREAM_TOTAL_TIMEOUT:
+                    logger.warning("SSE 流式执行总超时 (%ds)，强制终止", STREAM_TOTAL_TIMEOUT)
+                    final_reply = final_reply or "[执行超时] Agent 执行时间超过限制，已自动终止。请检查目标服务器状态后重试。"
+                    final_status = "error"
+                    break
+
                 event_kind = event.get("event", "")
-                event_name = event.get("name", "")
 
                 if event_kind == "on_chat_model_stream":
                     # LLM token 流
@@ -198,8 +194,40 @@ async def agent_stream(
 
                 elif event_kind == "on_chain_end":
                     output = event.get("data", {}).get("output", {})
+                    event_name = event.get("name", "")
 
-                    # —— 从 chatbot 节点输出中提取 tool_calls → 发送 tool_start ——
+                    # 跳过 LangGraph 汇总事件（包含所有历史 messages，会导致重复）
+                    # 只处理具体节点的输出
+                    if event_name in ("LangGraph", ""):
+                        # 但仍检查 approval 信号（从 LangGraph 整体 state 中）
+                        if isinstance(output, dict) and output.get("requires_approval") and not final_requires_approval:
+                            final_requires_approval = True
+                            final_pending_command = output.get("pending_command", "")
+                            final_triggered_rule = output.get("triggered_rule", "")
+                            final_status = "requires_approval"
+
+                            if not final_triggered_rule:
+                                import re as _re
+                                from langchain_core.messages import AIMessage as _AIMsg
+                                for msg in output.get("messages", []):
+                                    if isinstance(msg, _AIMsg) and msg.content:
+                                        m = _re.search(r'拦截规则:\s*`([^`]+)`', msg.content)
+                                        if m:
+                                            final_triggered_rule = m.group(1)
+                                            break
+
+                            approval_data = {
+                                "pending_command": final_pending_command,
+                                "triggered_rule": final_triggered_rule,
+                            }
+                            yield _sse_event("approval_required", approval_data)
+                            await save_agent_task_step(
+                                task_id, step_index, "approval_required",
+                                json.dumps(approval_data, ensure_ascii=False))
+                            step_index += 1
+                        continue
+
+                    # —— 从具体节点输出的 messages 中提取工具调用信息 ——
                     if isinstance(output, dict) and "messages" in output:
                         from langchain_core.messages import AIMessage, ToolMessage as LCToolMessage
                         for msg in output["messages"]:
@@ -226,7 +254,6 @@ async def agent_stream(
                                     output_data = {"raw": str(tool_content)[:500]}
 
                                 safe_output = redact_sensitive_fields(output_data) if isinstance(output_data, dict) else output_data
-                                # 尝试从 ToolMessage 的 name 属性获取工具名
                                 tool_name = getattr(msg, "name", None) or "secure_shell"
                                 tool_end_data = {"tool": tool_name, "result": safe_output}
                                 yield _sse_event("tool_end", tool_end_data)
@@ -235,7 +262,6 @@ async def agent_stream(
                                     json.dumps(tool_end_data, ensure_ascii=False))
                                 step_index += 1
 
-                                # 记录 tool_calls 供最终 done 事件使用
                                 final_tool_calls.append({
                                     "tool": tool_name,
                                     "args": safe_output.get("command", "") if isinstance(safe_output, dict) else {},
@@ -245,22 +271,8 @@ async def agent_stream(
                             if isinstance(msg, AIMessage) and msg.content:
                                 final_reply = msg.content
 
-                        # 检查审批/熔断信号
-                        if output.get("requires_approval"):
-                            final_requires_approval = True
-                            final_pending_command = output.get("pending_command", "")
-                            final_triggered_rule = output.get("triggered_rule", "")
-                            final_status = "requires_approval"
 
-                            approval_data = {
-                                "pending_command": final_pending_command,
-                                "triggered_rule": final_triggered_rule,
-                            }
-                            yield _sse_event("approval_required", approval_data)
-                            await save_agent_task_step(
-                                task_id, step_index, "approval_required",
-                                json.dumps(approval_data, ensure_ascii=False))
-                            step_index += 1
+
 
             # 刷写剩余的 thinking buffer
             if thinking_buffer:
@@ -308,15 +320,18 @@ async def agent_stream(
             logger.exception("SSE 流式执行异常: task_id=%s", task_id)
             error_data = {"error": str(exc)}
             yield _sse_event("error", error_data)
-            await save_agent_task_step(task_id, step_index, "error",
-                                       json.dumps(error_data, ensure_ascii=False))
-            await finish_agent_task(
-                task_id=task_id,
-                status="error",
-                final_reply="",
-                total_steps=step_index + 1,
-                error_message=str(exc),
-            )
+            try:
+                await save_agent_task_step(task_id, step_index, "error",
+                                           json.dumps(error_data, ensure_ascii=False))
+                await finish_agent_task(
+                    task_id=task_id,
+                    status="error",
+                    final_reply="",
+                    total_steps=step_index + 1,
+                    error_message=str(exc),
+                )
+            except Exception:
+                logger.exception("保存错误状态失败: task_id=%s", task_id)
 
     return StreamingResponse(
         event_generator(),

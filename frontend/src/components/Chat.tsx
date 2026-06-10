@@ -332,6 +332,8 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
         }
 
         case 'tool_start': {
+          // 清空中间轮的 thinking 文本（工具执行前的规划文本不属于最终回复）
+          accumulatedText = '';
           const step: StreamingStep = {
             type: 'tool_start',
             tool: data.tool,
@@ -340,7 +342,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
           };
           accumulatedSteps = [...accumulatedSteps, step];
           setMessages(prev => prev.map(m =>
-            m.id === agentMsgId ? { ...m, streamingSteps: [...accumulatedSteps] } : m
+            m.id === agentMsgId ? { ...m, text: '', streamingSteps: [...accumulatedSteps] } : m
           ));
           break;
         }
@@ -389,7 +391,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
           setMessages(prev => prev.map(m =>
             m.id === agentMsgId ? {
               ...m,
-              text: data.reply || accumulatedText,
+              text: accumulatedText || data.reply || '',
               isStreaming: false,
               toolCalls: data.tool_calls || finalToolCalls,
               secretRefs: data.secret_refs_used || [],
@@ -726,60 +728,123 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                       {renderMessageContent(msg.id === 0 ? t('chat.welcome') : msg.text)}
 
                       {/* SSE 流式执行步骤进度 */}
-                      {msg.streamingSteps && msg.streamingSteps.length > 0 && (
-                        <div className="mt-3 pt-3 border-t border-outline-variant/40">
-                          <p className="text-[10px] font-bold text-on-surface-variant mb-2 flex items-center gap-1.5">
-                            <Terminal className="w-3 h-3" />
-                            {msg.isStreaming ? '执行中...' : `共 ${msg.streamingSteps.filter(s => s.type === 'tool_end').length} 步工具调用`}
-                          </p>
-                          <div className="space-y-1.5">
-                            {msg.streamingSteps.map((step, idx) => (
-                              <div key={idx} className="flex items-center gap-2 text-[10px]">
-                                {step.type === 'tool_start' ? (
-                                  <>
-                                    <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-                                    <span className="text-primary font-medium">
-                                      正在执行 <code className="bg-primary/10 px-1 py-0.5 rounded text-[9px]">{step.tool}</code>
-                                      {step.args?.command && (
-                                        <span className="text-on-surface-variant ml-1 font-normal">
-                                          {String(step.args.command).length > 40
-                                            ? String(step.args.command).substring(0, 40) + '...'
-                                            : step.args.command}
+                      {msg.streamingSteps && msg.streamingSteps.length > 0 && (() => {
+                        // 将 tool_start + tool_end 配对合并
+                        const steps = msg.streamingSteps;
+                        const paired: Array<{
+                          tool: string;
+                          args?: Record<string, any>;
+                          result?: Record<string, any>;
+                          done: boolean;
+                          isError: boolean;
+                        }> = [];
+
+                        for (let i = 0; i < steps.length; i++) {
+                          const s = steps[i];
+                          if (s.type === 'tool_start') {
+                            const endIdx = steps.findIndex(
+                              (e, j) => j > i && e.type === 'tool_end' && e.tool === s.tool
+                            );
+                            if (endIdx !== -1) {
+                              const endStep = steps[endIdx];
+                              paired.push({
+                                tool: s.tool || 'unknown',
+                                args: s.args,
+                                result: endStep.result,
+                                done: true,
+                                isError: endStep.result?.status === 'error' || (endStep.result?.exit_code !== undefined && endStep.result?.exit_code !== 0),
+                              });
+                            } else {
+                              paired.push({
+                                tool: s.tool || 'unknown',
+                                args: s.args,
+                                done: false,
+                                isError: false,
+                              });
+                            }
+                          }
+                        }
+
+                        if (paired.length === 0) return null;
+
+                        return (
+                          <div className="mt-3 pt-3 border-t border-outline-variant/40">
+                            <p className="text-[10px] font-bold text-on-surface-variant mb-2 flex items-center gap-1.5">
+                              <Terminal className="w-3 h-3" />
+                              {msg.isStreaming ? '执行中...' : `共 ${paired.filter(p => p.done).length} 步工具调用`}
+                            </p>
+                            <div className="space-y-1">
+                              {paired.map((p, idx) => (
+                                <details key={idx} className="group">
+                                  <summary className="flex items-center gap-2 text-[10px] cursor-pointer list-none select-none py-0.5 hover:bg-surface-container-low/50 rounded px-1 -mx-1 transition-colors">
+                                    {!p.done ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                                        <span className="text-primary font-medium flex-1 min-w-0 truncate">
+                                          正在执行 <code className="bg-primary/10 px-1 py-0.5 rounded text-[9px]">{p.tool}</code>
+                                          {p.args?.command && (
+                                            <span className="text-on-surface-variant ml-1 font-normal">
+                                              {String(p.args.command).length > 50
+                                                ? String(p.args.command).substring(0, 50) + '...'
+                                                : p.args.command}
+                                            </span>
+                                          )}
                                         </span>
-                                      )}
-                                    </span>
-                                  </>
-                                ) : step.type === 'tool_end' ? (
-                                  <>
-                                    {step.result?.status === 'error' || step.result?.exit_code !== 0 ? (
-                                      <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                      </>
                                     ) : (
-                                      <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
-                                    )}
-                                    <span className={`font-medium ${
-                                      step.result?.status === 'error' || step.result?.exit_code !== 0
-                                        ? 'text-red-600' : 'text-green-600'
-                                    }`}>
-                                      <code className="bg-surface-container px-1 py-0.5 rounded text-[9px]">{step.tool}</code>
-                                      {step.result?.exit_code !== undefined && (
-                                        <span className="text-on-surface-variant ml-1 font-normal">
-                                          exit_code={step.result.exit_code}
+                                      <>
+                                        {p.isError ? (
+                                          <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                        ) : (
+                                          <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                                        )}
+                                        <span className={`font-medium flex-1 min-w-0 truncate ${p.isError ? 'text-red-600' : 'text-green-600'}`}>
+                                          <code className="bg-surface-container px-1 py-0.5 rounded text-[9px]">{p.tool}</code>
+                                          {p.result?.exit_code !== undefined && (
+                                            <span className="text-on-surface-variant ml-1 font-normal">
+                                              exit_code={p.result.exit_code}
+                                            </span>
+                                          )}
                                         </span>
-                                      )}
-                                    </span>
-                                  </>
-                                ) : null}
-                              </div>
-                            ))}
-                            {msg.isStreaming && (
-                              <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
-                                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
-                                <span>等待下一步...</span>
-                              </div>
-                            )}
+                                        <span className="text-on-surface-variant/50 text-[9px] shrink-0 group-open:hidden">▶</span>
+                                        <span className="text-on-surface-variant/50 text-[9px] shrink-0 hidden group-open:inline">▼</span>
+                                      </>
+                                    )}
+                                  </summary>
+                                  {/* 展开后的详情 */}
+                                  <div className="ml-5 mt-1 mb-2 p-2 rounded-lg bg-surface-container/50 border border-outline-variant/30 text-[10px] font-mono space-y-1.5 animate-in fade-in duration-200">
+                                    {p.args?.command && (
+                                      <div>
+                                        <span className="text-secondary font-semibold">命令:</span>
+                                        <pre className="mt-0.5 text-on-surface-variant bg-surface-dim/60 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-all">{String(p.args.command)}</pre>
+                                      </div>
+                                    )}
+                                    {p.result && (
+                                      <div>
+                                        <span className="text-secondary font-semibold">结果:</span>
+                                        <pre className="mt-0.5 text-on-surface-variant bg-surface-dim/60 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+                                          {p.result.stdout
+                                            ? String(p.result.stdout).substring(0, 500) + (String(p.result.stdout).length > 500 ? '\n... (截断)' : '')
+                                            : p.result.raw
+                                              ? String(p.result.raw).substring(0, 500)
+                                              : JSON.stringify(p.result, null, 2).substring(0, 500)
+                                          }
+                                        </pre>
+                                      </div>
+                                    )}
+                                  </div>
+                                </details>
+                              ))}
+                              {msg.isStreaming && (
+                                <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                                  <span>等待下一步...</span>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
 
                       {/* 流式加载中占位 */}
                       {msg.isStreaming && (!msg.text) && (!msg.streamingSteps || msg.streamingSteps.length === 0) && (
@@ -817,8 +882,8 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                       </div>
                     )}
 
-                    {/* Tool Calls Summary */}
-                    {msg.toolCalls && msg.toolCalls.length > 0 && (
+                    {/* Tool Calls Summary — 仅在没有 streamingSteps 时显示（旧同步 API 兼容） */}
+                    {msg.toolCalls && msg.toolCalls.length > 0 && (!msg.streamingSteps || msg.streamingSteps.length === 0) && (
                       <div className="space-y-2">
                         {msg.toolCalls.map((tc, i) => {
                           const isSuccess = !msg.text.toLowerCase().includes('error') && !msg.text.toLowerCase().includes('失败') && !msg.text.toLowerCase().includes('denied');

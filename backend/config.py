@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     local_model_disable_cot: bool = True  # 是否强制禁用 CoT 思考链以提高实时性
 
     # ---- 运行与安全决策 ----
-    agent_max_retries: int = 5
+    agent_max_retries: int = 15
     agent_high_risk_commands: str = "rm,mv,reboot,shutdown,poweroff,halt,init,systemctl stop,service stop,docker stop,docker rm,docker kill,docker rmi,docker system prune,kill,killall,pkill,iptables -F,ufw disable,drop database,drop table,truncate,delete from"
     agent_approval_required: bool = True
 

@@ -43,16 +43,26 @@ class DetectedSecret:
 _SYSTEM_PROMPT = """你是一个安全信息提取器。分析用户输入，精确识别其中的敏感凭证信息。
 
 敏感信息类型包括：
-- password: 登录密码、口令、passphrase
+- password: 登录密码、口令、passphrase、各种服务的密码（数据库密码、root密码、MySQL密码等）
 - api_key: API 密钥（sk-xxx, token, bearer 等）
 - private_key: SSH 私钥、证书密钥
 - connection_string: 包含凭证的数据库连接串（postgresql://user:PASS@host）
 
+典型的密码出现场景（都必须提取）：
+- "密码设置为123456" → 提取 "123456"
+- "密码是 abc@2024" → 提取 "abc@2024"
+- "root密码 P@ssw0rd" → 提取 "P@ssw0rd"
+- "MYSQL_ROOT_PASSWORD=mypass123" → 提取 "mypass123"
+- "-p 3306 -e PASSWORD=xxx" → 提取 "xxx"
+- "用密码 test123 登录" → 提取 "test123"
+- "口令为 Qwerty!@#" → 提取 "Qwerty!@#"
+
 规则：
-1. 仅提取真正的凭证值，不要提取用户名、IP 地址、端口号等非密码信息
-2. 如果无法确定是否为敏感信息，不要提取（宁可漏过，不可误判）
-3. 仅返回 JSON 数组，不要输出任何其他文字
-4. 不要用 markdown 代码块包裹，直接返回 JSON
+1. 仅提取真正的凭证值（密码、密钥、token），不要提取用户名、IP 地址、端口号、容器名等非密码信息
+2. 当用户说"密码设置为X"、"密码是X"、"密码为X"、"密码X"时，X 就是密码，必须提取
+3. 如果无法确定是否为敏感信息，不要提取（宁可漏过，不可误判）
+4. 仅返回 JSON 数组，不要输出任何其他文字
+5. 不要用 markdown 代码块包裹，直接返回 JSON
 
 输出格式：
 [{"value": "实际的敏感值", "type": "password|api_key|private_key|connection_string", "label": "简短描述"}]
