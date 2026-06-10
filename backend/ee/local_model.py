@@ -176,6 +176,7 @@ async def extract_secrets(
             content = _extract_text_from_response(resp_data)
 
         # 4. 严格校验与防幻觉过滤
+        logger.info("[EE] 本地模型返回原始文本: %r", content)
         results = _parse_model_output(content, original_text=text)
 
         logger.info(
