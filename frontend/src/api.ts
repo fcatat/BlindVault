@@ -148,6 +148,89 @@ export async function runAgent(payload: AgentRunPayload, signal?: AbortSignal): 
 }
 
 
+// ---- SSE 流式 Agent 调用 ----
+
+export type SSEEventType =
+  | 'sanitized'
+  | 'credential_blocked'
+  | 'thinking'
+  | 'tool_start'
+  | 'tool_end'
+  | 'approval_required'
+  | 'done'
+  | 'error';
+
+export interface SSEEvent {
+  type: SSEEventType;
+  data: Record<string, any>;
+}
+
+/**
+ * SSE 流式调用 Agent。
+ *
+ * 使用 fetch + ReadableStream（而非 EventSource）以支持自定义 Header。
+ * 每收到一个 SSE 事件就调用 onEvent 回调。
+ */
+export async function streamAgent(
+  payload: AgentRunPayload,
+  onEvent: (event: SSEEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const params = new URLSearchParams({
+    message: payload.user_message,
+    session_id: payload.session_id,
+    confirmed: String(payload.confirmed || false),
+    history: JSON.stringify(payload.history || []),
+  });
+
+  const res = await fetch(`${API_BASE}/agent/stream?${params}`, {
+    headers: getHeaders(payload.session_id),
+    signal,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    onEvent({ type: 'error', data: { error: errText } });
+    return;
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // 解析 SSE 格式：data: {...}\n\n
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop() || '';
+
+      for (const raw of parts) {
+        const lines = raw.split('\n');
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const parsed: SSEEvent = JSON.parse(line.slice(6));
+              onEvent(parsed);
+            } catch {
+              // 跳过无法解析的事件
+            }
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    if (err.name !== 'AbortError') {
+      onEvent({ type: 'error', data: { error: err.message } });
+    }
+  }
+}
+
+
 // ---- Config 类型 ----
 
 export interface LLMConfig {

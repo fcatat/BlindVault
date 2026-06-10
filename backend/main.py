@@ -20,10 +20,6 @@ from backend.config import get_settings
 from backend.db import close_db, init_db, load_llm_config
 from backend.redaction import RedactionLogFilter, RedactionMiddleware
 from backend.redis_store import close_redis, get_store
-from backend.tools.browser_login_mock import (
-    BROWSER_LOGIN_MOCK_SCHEMA,
-    browser_login_mock,
-)
 from backend.tools.registry import register_tool
 
 
@@ -42,13 +38,6 @@ def _setup_logging() -> None:
 
 def _register_tools() -> None:
     """注册所有可用工具。"""
-    register_tool(
-        name="browser_login_mock",
-        description="模拟浏览器登录。密码通过 secret_ref 传入，不接受明文密码。",
-        parameters=BROWSER_LOGIN_MOCK_SCHEMA,
-        func=browser_login_mock,
-    )
-
     # 注册 secure_shell 工具
     try:
         from backend.tools.secure_shell import (
@@ -162,11 +151,13 @@ from backend.api.secrets import router as secrets_router
 from backend.api.agent import router as agent_router
 from backend.api.config import router as config_router
 from backend.api.tasks import router as tasks_router
+from backend.api.stream import router as stream_router
 
 app.include_router(secrets_router)
 app.include_router(agent_router)
 app.include_router(config_router)
 app.include_router(tasks_router)
+app.include_router(stream_router)
 
 
 

@@ -5,10 +5,19 @@ import {
   CalendarClock, Play, Pause, FileText, RefreshCw
 } from 'lucide-react';
 import { 
-  runAgent, listSecrets,
-  type AgentRunResponse, type SecretMetadata 
+  runAgent, streamAgent, listSecrets,
+  type AgentRunResponse, type SSEEvent, type SecretMetadata 
 } from '../api';
 import { useI18n } from '../i18n';
+
+interface StreamingStep {
+  type: 'tool_start' | 'tool_end' | 'thinking';
+  tool?: string;
+  args?: Record<string, any>;
+  result?: Record<string, any>;
+  content?: string;
+  timestamp: number;
+}
 
 interface Message {
   id: number;
@@ -25,6 +34,9 @@ interface Message {
   triggeredRule?: string;
   localModelConfigured?: boolean;
   isEe?: boolean;
+  streamingSteps?: StreamingStep[];
+  isStreaming?: boolean;
+  taskId?: string;
 }
 
 interface ChatProps {
@@ -226,12 +238,23 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     }
 
     const userMsg: Message = { id: Date.now(), type: 'user', text };
-    const loadingMsg: Message = { id: Date.now() + 1, type: 'loading', text: '' };
+    const agentMsgId = Date.now() + 2;
+    
+    // 创建一个流式 Agent 消息占位
+    const streamingAgentMsg: Message = {
+      id: agentMsgId,
+      type: 'agent',
+      text: '',
+      isStreaming: true,
+      streamingSteps: [],
+      toolCalls: [],
+      secretRefs: [],
+    };
     
     if (isConfirmed) {
-      setMessages(prev => [...prev, loadingMsg]);
+      setMessages(prev => [...prev, streamingAgentMsg]);
     } else {
-      setMessages(prev => [...prev, userMsg, loadingMsg]);
+      setMessages(prev => [...prev, userMsg, streamingAgentMsg]);
       setInputVal('');
     }
     setIsLoading(true);
@@ -239,118 +262,152 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    try {
-      const history = messages
-        .filter(m => m.type === 'user' || m.type === 'agent')
-        .filter(m => m.id !== 0)
-        .map(m => ({
-          role: (m.type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
-          content: m.sanitizedText || m.text,
-        }));
+    const history = messages
+      .filter(m => m.type === 'user' || m.type === 'agent')
+      .filter(m => m.id !== 0)
+      .map(m => ({
+        role: (m.type === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: m.sanitizedText || m.text,
+      }));
 
-      const resp = await runAgent({ 
-        user_message: text, 
-        session_id: sessionId, 
-        history,
-        confirmed: isConfirmed || false
-      }, controller.signal);
-      
-      // 检测是否需要审批
-      if (resp.requires_approval && resp.pending_command) {
-        const approvalMsg: Message = {
-          id: Date.now(),
-          type: 'approval',
-          text: '安全审批挂起',
-          approvalStatus: 'pending',
-          pendingCommand: resp.pending_command,
-          triggeredRule: resp.triggered_rule || '',
-        };
-        setLastUserMessage(text);
-        
-        // 移除 loading 状态并追加审批消息
-        setMessages(prev => [...prev.filter(m => m.type !== 'loading'), approvalMsg]);
-        setIsLoading(false);
-        abortControllerRef.current = null;
-        return;
-      }
+    // 累积状态（在回调闭包中维护）
+    let accumulatedText = '';
+    let accumulatedSteps: StreamingStep[] = [];
+    let finalToolCalls: AgentRunResponse['tool_calls'] = [];
 
-      setMessages(prev => {
-        const filtered = prev.filter(m => m.type !== 'loading');
-        if (isConfirmed) {
-          const lastUserIdx = filtered.map(m => m.type).lastIndexOf('user');
-          if (lastUserIdx !== -1 && resp.sanitized_input) {
-            return filtered.map((m, idx) =>
-              idx === lastUserIdx ? { ...m, sanitizedText: resp.sanitized_input } : m
-            );
+    const handleSSEEvent = (event: SSEEvent) => {
+      const { type, data } = event;
+
+      switch (type) {
+        case 'sanitized': {
+          // 更新用户消息的 sanitizedText
+          if (data.sanitized_input && !isConfirmed) {
+            setMessages(prev => prev.map(m =>
+              m.id === userMsg.id ? { ...m, sanitizedText: data.sanitized_input } : m
+            ));
+          } else if (data.sanitized_input && isConfirmed) {
+            setMessages(prev => {
+              const lastUserIdx = prev.map(m => m.type).lastIndexOf('user');
+              return prev.map((m, idx) =>
+                idx === lastUserIdx ? { ...m, sanitizedText: data.sanitized_input } : m
+              );
+            });
           }
-          return filtered;
-        } else {
-          return filtered.map(m =>
-            m.id === userMsg.id && resp.sanitized_input
-              ? { ...m, sanitizedText: resp.sanitized_input }
-              : m
-          );
+          // 更新 taskId
+          if (data.task_id) {
+            setMessages(prev => prev.map(m =>
+              m.id === agentMsgId ? { ...m, taskId: data.task_id } : m
+            ));
+          }
+          break;
         }
-      });
 
-      const agentMsgId = Date.now() + 2;
-      const fullReply = resp.reply || '';
-      
-      if (resp.credential_detected) {
-        const blockAgentMsg: Message = {
-          id: agentMsgId,
-          type: 'agent',
-          text: fullReply,
-          isBlocked: true,
-          leakDetected: resp.leak_detected,
-          leakedValue: resp.leaked_value,
-          localModelConfigured: resp.local_model_configured,
-          isEe: resp.is_ee,
-        };
-        setMessages(prev => [...prev, blockAgentMsg]);
-        setIsLoading(false);
-        abortControllerRef.current = null;
-        fetchSecretsMetadata();
-        return;
-      }
-      
-      const emptyAgentMsg: Message = {
-        id: agentMsgId,
-        type: 'agent',
-        text: '',
-        toolCalls: resp.tool_calls,
-        secretRefs: resp.secret_refs_used,
-        leakDetected: resp.leak_detected,
-        leakedValue: resp.leaked_value,
-        localModelConfigured: resp.local_model_configured,
-        isEe: resp.is_ee,
-      };
+        case 'credential_blocked': {
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? {
+              ...m,
+              text: data.reply || '',
+              isBlocked: true,
+              isStreaming: false,
+              leakDetected: data.leak_detected,
+              leakedValue: data.leaked_value,
+              localModelConfigured: data.local_model_configured,
+              isEe: data.is_ee,
+            } : m
+          ));
+          setIsLoading(false);
+          fetchSecretsMetadata();
+          break;
+        }
 
-      setMessages(prev => [...prev, emptyAgentMsg]);
+        case 'thinking': {
+          // LLM token 流：逐字追加
+          if (data.content) {
+            accumulatedText += data.content;
+            setMessages(prev => prev.map(m =>
+              m.id === agentMsgId ? { ...m, text: accumulatedText } : m
+            ));
+          }
+          break;
+        }
 
-      let currentLength = 0;
-      const speed = 10; // 毫秒
-      const charsPerTick = 4; // 每次4个字符
+        case 'tool_start': {
+          const step: StreamingStep = {
+            type: 'tool_start',
+            tool: data.tool,
+            args: data.args,
+            timestamp: Date.now(),
+          };
+          accumulatedSteps = [...accumulatedSteps, step];
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? { ...m, streamingSteps: [...accumulatedSteps] } : m
+          ));
+          break;
+        }
 
-      const timer = setInterval(() => {
-        currentLength += charsPerTick;
-        const textSlice = fullReply.slice(0, currentLength);
+        case 'tool_end': {
+          const step: StreamingStep = {
+            type: 'tool_end',
+            tool: data.tool,
+            result: data.result,
+            timestamp: Date.now(),
+          };
+          accumulatedSteps = [...accumulatedSteps, step];
+          // 收集 tool_calls
+          finalToolCalls = [...finalToolCalls, { tool: data.tool, args: data.args || {} }];
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? {
+              ...m,
+              streamingSteps: [...accumulatedSteps],
+              toolCalls: [...finalToolCalls],
+            } : m
+          ));
+          break;
+        }
 
-        setMessages(prev => 
-          prev.map(m => m.id === agentMsgId ? { ...m, text: textSlice } : m)
-        );
+        case 'approval_required': {
+          // 切换为审批模式
+          setLastUserMessage(text);
+          const approvalMsg: Message = {
+            id: Date.now() + 10,
+            type: 'approval',
+            text: '安全审批挂起',
+            approvalStatus: 'pending',
+            pendingCommand: data.pending_command,
+            triggeredRule: data.triggered_rule || '',
+          };
+          setMessages(prev => [
+            ...prev.filter(m => m.id !== agentMsgId),
+            approvalMsg,
+          ]);
+          setIsLoading(false);
+          break;
+        }
 
-        if (currentLength >= fullReply.length) {
-          clearInterval(timer);
-          streamTimerRef.current = null;
+        case 'done': {
+          // 最终完成事件
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? {
+              ...m,
+              text: data.reply || accumulatedText,
+              isStreaming: false,
+              toolCalls: data.tool_calls || finalToolCalls,
+              secretRefs: data.secret_refs_used || [],
+              leakDetected: data.leak_detected,
+              leakedValue: data.leaked_value,
+              localModelConfigured: data.local_model_configured,
+            } : m
+          ));
+
           setIsLoading(false);
 
-          if (resp.tool_calls && resp.tool_calls.length > 0) {
+          if ((data.tool_calls && data.tool_calls.length > 0) || finalToolCalls.length > 0) {
             setActiveTraceMsgId(agentMsgId);
           }
 
           fetchSecretsMetadata();
 
+          // 首条消息回调
           setMessages(prev => {
             const actualMsgCount = prev.filter(m => m.type === 'user' || m.type === 'agent').length;
             if (actualMsgCount <= 3 && onFirstMessage) {
@@ -358,28 +415,50 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
             }
             return prev;
           });
+          break;
         }
-      }, speed);
 
-      streamTimerRef.current = timer;
-
-    } catch (e: any) {
-      setIsLoading(false);
-      if (e.name === 'AbortError') {
-        // 用户主动停止，移除 loading 消息并恢复状态
-        setMessages(prev => prev.filter(m => m.type !== 'loading'));
-        return;
+        case 'error': {
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? {
+              ...m,
+              text: data.error || 'SSE 流式执行出错',
+              isStreaming: false,
+            } : m
+          ));
+          setIsLoading(false);
+          break;
+        }
       }
-      setMessages(prev => {
-        const filtered = prev.filter(m => m.type !== 'loading');
-        const isBlocked = e.message && (e.message.includes('阻断') || e.message.includes('拦截') || e.message.includes('外泄'));
-        return [...filtered, {
-          id: Date.now() + 2,
-          type: 'agent',
-          text: e.message || 'Request failed',
-          isBlocked: isBlocked,
-        }];
-      });
+    };
+
+    try {
+      await streamAgent(
+        {
+          user_message: text,
+          session_id: sessionId,
+          history,
+          confirmed: isConfirmed || false,
+        },
+        handleSSEEvent,
+        controller.signal,
+      );
+    } catch (e: any) {
+      if (e.name === 'AbortError') {
+        setMessages(prev => prev.map(m =>
+          m.id === agentMsgId ? { ...m, isStreaming: false, text: accumulatedText || '(已取消)' } : m
+        ));
+      } else {
+        setMessages(prev => prev.map(m =>
+          m.id === agentMsgId ? {
+            ...m,
+            text: e.message || 'Request failed',
+            isStreaming: false,
+            isBlocked: e.message?.includes('阻断') || e.message?.includes('拦截'),
+          } : m
+        ));
+      }
+      setIsLoading(false);
     } finally {
       abortControllerRef.current = null;
       inputRef.current?.focus();
@@ -646,6 +725,69 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                     >
                       {renderMessageContent(msg.id === 0 ? t('chat.welcome') : msg.text)}
 
+                      {/* SSE 流式执行步骤进度 */}
+                      {msg.streamingSteps && msg.streamingSteps.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-outline-variant/40">
+                          <p className="text-[10px] font-bold text-on-surface-variant mb-2 flex items-center gap-1.5">
+                            <Terminal className="w-3 h-3" />
+                            {msg.isStreaming ? '执行中...' : `共 ${msg.streamingSteps.filter(s => s.type === 'tool_end').length} 步工具调用`}
+                          </p>
+                          <div className="space-y-1.5">
+                            {msg.streamingSteps.map((step, idx) => (
+                              <div key={idx} className="flex items-center gap-2 text-[10px]">
+                                {step.type === 'tool_start' ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                                    <span className="text-primary font-medium">
+                                      正在执行 <code className="bg-primary/10 px-1 py-0.5 rounded text-[9px]">{step.tool}</code>
+                                      {step.args?.command && (
+                                        <span className="text-on-surface-variant ml-1 font-normal">
+                                          {String(step.args.command).length > 40
+                                            ? String(step.args.command).substring(0, 40) + '...'
+                                            : step.args.command}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </>
+                                ) : step.type === 'tool_end' ? (
+                                  <>
+                                    {step.result?.status === 'error' || step.result?.exit_code !== 0 ? (
+                                      <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                    ) : (
+                                      <CheckCircle2 className="w-3 h-3 text-green-500 shrink-0" />
+                                    )}
+                                    <span className={`font-medium ${
+                                      step.result?.status === 'error' || step.result?.exit_code !== 0
+                                        ? 'text-red-600' : 'text-green-600'
+                                    }`}>
+                                      <code className="bg-surface-container px-1 py-0.5 rounded text-[9px]">{step.tool}</code>
+                                      {step.result?.exit_code !== undefined && (
+                                        <span className="text-on-surface-variant ml-1 font-normal">
+                                          exit_code={step.result.exit_code}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </>
+                                ) : null}
+                              </div>
+                            ))}
+                            {msg.isStreaming && (
+                              <div className="flex items-center gap-2 text-[10px] text-on-surface-variant">
+                                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                                <span>等待下一步...</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 流式加载中占位 */}
+                      {msg.isStreaming && (!msg.text) && (!msg.streamingSteps || msg.streamingSteps.length === 0) && (
+                        <div className="flex items-center gap-2 text-xs text-on-surface-variant">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>正在处理...</span>
+                        </div>
+                      )}
 
                     </div>
 
@@ -928,12 +1070,6 @@ function ToolLogsPanel({
             if (sshMatch) host = sshMatch[1];
             else if (pgMatch) host = pgMatch[1];
             else if (curlMatch) host = curlMatch[1];
-          } else if (toolCall.tool === 'browser_login_mock' && toolCall.args.url) {
-            try {
-              host = new URL(toolCall.args.url).hostname;
-            } catch {
-              host = toolCall.args.url;
-            }
           }
 
           const isSuccess = !msg.text.toLowerCase().includes('error') && 
@@ -1033,14 +1169,6 @@ function ToolLogsPanel({
                     </div>
                     
                     <div className="p-2 space-y-1 text-[8px]">
-                      {toolCall.tool === 'browser_login_mock' ? (
-                        <>
-                          <p className="text-on-surface-variant font-bold">&gt; Initializing headless browser...</p>
-                          <p className="text-on-surface-variant font-bold">&gt; Navigating to {toolCall.args.url || 'https://admin.example.com'}</p>
-                          <p className="text-on-surface-variant font-bold">&gt; Locating DOM elements... Found.</p>
-                          <p className="text-primary font-bold">&gt; Injecting payload via {secretRef.substring(0, 8)}...</p>
-                        </>
-                      ) : (
                         <>
                           <p className="text-on-surface-variant font-bold">&gt; Active security context: user_id=validated</p>
                           <p className="text-primary font-bold">&gt; Resolve secret ref: {secretRef.substring(0, 10)}...</p>
@@ -1049,7 +1177,6 @@ function ToolLogsPanel({
                             {toolCall.args.command || 'secure_shell'}
                           </p>
                         </>
-                      )}
                     </div>
                   </div>
                 </div>

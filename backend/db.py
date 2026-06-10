@@ -71,6 +71,37 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_next_run ON scheduled_tasks(next_run_at) WHERE status = 'active';
 """
 
+CREATE_AGENT_TASKS_TABLE = """
+CREATE TABLE IF NOT EXISTS agent_tasks (
+    task_id             VARCHAR(64) PRIMARY KEY,
+    user_id             VARCHAR(128) NOT NULL,
+    session_id          VARCHAR(128) NOT NULL,
+    tenant_id           VARCHAR(128) NOT NULL DEFAULT 'default',
+    user_message        TEXT NOT NULL,
+    sanitized_message   TEXT,
+    status              VARCHAR(32) NOT NULL DEFAULT 'running',
+    final_reply         TEXT,
+    total_steps         INTEGER NOT NULL DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at         TIMESTAMPTZ,
+    error_message       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_session ON agent_tasks(session_id);
+CREATE INDEX IF NOT EXISTS idx_agent_tasks_user ON agent_tasks(user_id);
+"""
+
+CREATE_AGENT_TASK_STEPS_TABLE = """
+CREATE TABLE IF NOT EXISTS agent_task_steps (
+    id                  SERIAL PRIMARY KEY,
+    task_id             VARCHAR(64) NOT NULL REFERENCES agent_tasks(task_id) ON DELETE CASCADE,
+    step_index          INTEGER NOT NULL,
+    step_type           VARCHAR(32) NOT NULL,
+    data                JSONB NOT NULL DEFAULT '{}',
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_agent_task_steps_task ON agent_task_steps(task_id);
+"""
+
 
 async def init_db(database_url: str) -> None:
     """初始化数据库连接池并建表。"""
@@ -80,7 +111,10 @@ async def init_db(database_url: str) -> None:
         await conn.execute(CREATE_CONFIG_TABLE)
         await conn.execute(CREATE_SECRET_ARCHIVE_TABLE)
         await conn.execute(CREATE_SCHEDULED_TASKS_TABLE)
-    logger.info("PostgreSQL 连接成功，配置表、归档表和定时任务表已就绪")
+        await conn.execute(CREATE_AGENT_TASKS_TABLE)
+        await conn.execute(CREATE_AGENT_TASK_STEPS_TABLE)
+    logger.info("PostgreSQL 连接成功，所有数据表已就绪")
+
 
 
 
@@ -432,3 +466,91 @@ async def delete_scheduled_task(task_id: str) -> None:
         await conn.execute("DELETE FROM scheduled_tasks WHERE id = $1", task_id)
 
 
+# ============================================================
+# Agent 流式任务 CRUD
+# ============================================================
+
+
+async def create_agent_task(
+    task_id: str,
+    user_id: str,
+    session_id: str,
+    tenant_id: str,
+    user_message: str,
+    sanitized_message: str = "",
+) -> None:
+    """创建一条新的 Agent 流式任务记录。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO agent_tasks (task_id, user_id, session_id, tenant_id, user_message, sanitized_message)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            """,
+            task_id, user_id, session_id, tenant_id, user_message, sanitized_message,
+        )
+
+
+async def save_agent_task_step(
+    task_id: str,
+    step_index: int,
+    step_type: str,
+    data: str,
+) -> None:
+    """保存 Agent 任务的单步执行记录。data 为 JSON 字符串。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO agent_task_steps (task_id, step_index, step_type, data)
+            VALUES ($1, $2, $3, $4::jsonb)
+            """,
+            task_id, step_index, step_type, data,
+        )
+
+
+async def finish_agent_task(
+    task_id: str,
+    status: str,
+    final_reply: str,
+    total_steps: int,
+    error_message: str = "",
+) -> None:
+    """标记 Agent 任务完成（成功或失败）。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE agent_tasks
+            SET status = $1, final_reply = $2, total_steps = $3,
+                finished_at = NOW(), error_message = $4
+            WHERE task_id = $5
+            """,
+            status, final_reply, total_steps, error_message, task_id,
+        )
+
+
+async def get_agent_task(task_id: str) -> Optional[dict]:
+    """获取指定 Agent 任务详情。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM agent_tasks WHERE task_id = $1", task_id
+        )
+        return dict(row) if row else None
+
+
+async def list_agent_task_steps(task_id: str) -> list[dict]:
+    """获取指定任务的所有执行步骤。"""
+    pool = _get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT step_index, step_type, data, created_at
+            FROM agent_task_steps
+            WHERE task_id = $1
+            ORDER BY step_index
+            """,
+            task_id,
+        )
+        return [dict(row) for row in rows]

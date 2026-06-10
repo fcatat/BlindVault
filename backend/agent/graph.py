@@ -105,7 +105,6 @@ def _mock_chatbot(state: AgentState) -> dict:
     Mock LLM：根据关键词自动构造 tool_call 或直接回复。
 
     规则：
-    - 消息包含 "login" / "登录" + secret_ref → 构造 browser_login_mock
     - 消息包含 "cron" / "every" / "定时" / "每天" → 构造 create_scheduled_task
     - 消息包含 "nginx" / "docker" / "镜像" / "自愈" → 自动生成带错命令并在失败时自主纠错重试
     - 消息包含 "plan" / "步骤" / "部署" / "复合" → 构造 generate_task_plan
@@ -220,39 +219,6 @@ def _mock_chatbot(state: AgentState) -> dict:
             ]
         }
 
-    # 检测 login 关键词和 secret_ref
-    is_login = bool(re.search(r"login|登录", content, re.IGNORECASE))
-
-    if is_login and secret_refs:
-        # 从消息中提取 URL（简单匹配）
-        url_match = re.search(r"https?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+", content)
-        url = url_match.group(0).rstrip(",.;:!?") if url_match else "https://example.com"
-
-        # 提取用户名（简单启发式）
-        username_match = re.search(
-            r"(?:username|user|用户名)[=:\s]+(\S+)", content, re.IGNORECASE
-        )
-        username = username_match.group(1) if username_match else "user"
-
-        return {
-            "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "name": "browser_login_mock",
-                            "args": {
-                                "username": username,
-                                "password_ref": secret_refs[0],
-                                "url": url,
-                            },
-                        }
-                    ],
-                )
-            ]
-        }
-
     # 默认回复
     return {
         "messages": [
@@ -261,7 +227,7 @@ def _mock_chatbot(state: AgentState) -> dict:
                     "你好！我是 BlindVault 安全助手。\n"
                     "我可以帮你使用安全工具执行操作。\n"
                     "请告诉我你需要做什么，例如：\n"
-                    "「请用 {{secret:sec_live_xxx}} 登录 https://example.com，用户名 admin」"
+                    "「连接到 10.x.x.x root {{secret:sec_live_xxx}} 执行 uptime」"
                 )
             )
         ]
@@ -489,7 +455,7 @@ def build_agent_graph(
     return graph.compile()
 
 
-async def run_agent(
+def prepare_agent_state(
     user_message: str,
     store: SecretStore,
     user_id: str,
@@ -497,21 +463,12 @@ async def run_agent(
     tenant_id: str,
     history: list[dict] | None = None,
     confirmed: bool = False,
-) -> dict:
+) -> tuple[Any, dict]:
     """
-    运行 agent 处理用户消息。
-
-    Args:
-        user_message: 用户消息（可能包含 {{secret:sec_xxx}} 引用）
-        store: Redis 存储实例
-        user_id: 用户 ID
-        session_id: 会话 ID
-        tenant_id: 租户 ID
-        history: 对话历史
-        confirmed: 是否已确认授权执行高危操作
+    构建 Graph 实例和初始 state，供同步/流式两种模式复用。
 
     Returns:
-        {"reply": str, "tool_calls": list, "secret_refs_used": list, "status": str, "requires_approval": bool, "pending_command": str}
+        (compiled_graph, initial_state)
     """
     settings = get_settings()
     use_mock = settings.llm_provider == "mock"
@@ -524,9 +481,6 @@ async def run_agent(
     )
 
     graph = build_agent_graph(store=store, ctx=ctx, use_mock=use_mock)
-
-    # 提取消息中的 secret_refs
-    secret_refs = _SECRET_REF_EXTRACT.findall(user_message)
 
     # Build message list from history + current message
     history_messages = []
@@ -541,7 +495,6 @@ async def run_agent(
             elif role == "assistant":
                 history_messages.append(AIMessage(content=content))
 
-    # Run graph
     initial_state = {
         "messages": history_messages + [HumanMessage(content=user_message)],
         "user_id": user_id,
@@ -554,9 +507,15 @@ async def run_agent(
         "triggered_rule": "",
     }
 
-    result = await graph.ainvoke(initial_state)
+    return graph, initial_state
 
-    # 提取最终回复和工具调用信息
+
+def extract_result_from_state(result: dict, user_message: str) -> dict:
+    """
+    从 Graph 最终 state 中提取标准化的结果字典。
+
+    用于同步 run_agent 和 SSE 流式端点共用的结果解析。
+    """
     messages = result["messages"]
     reply = ""
     tool_calls_info = []
@@ -575,6 +534,9 @@ async def run_agent(
                             for k, v in tc["args"].items()
                         },
                     })
+
+    # 提取消息中的 secret_refs
+    secret_refs = _SECRET_REF_EXTRACT.findall(user_message)
 
     # 提取最终审批状态
     requires_approval = result.get("requires_approval", False)
@@ -596,3 +558,40 @@ async def run_agent(
         "triggered_rule": triggered_rule,
     }
 
+
+async def run_agent(
+    user_message: str,
+    store: SecretStore,
+    user_id: str,
+    session_id: str,
+    tenant_id: str,
+    history: list[dict] | None = None,
+    confirmed: bool = False,
+) -> dict:
+    """
+    运行 agent 处理用户消息（同步模式）。
+
+    Args:
+        user_message: 用户消息（可能包含 {{secret:sec_xxx}} 引用）
+        store: Redis 存储实例
+        user_id: 用户 ID
+        session_id: 会话 ID
+        tenant_id: 租户 ID
+        history: 对话历史
+        confirmed: 是否已确认授权执行高危操作
+
+    Returns:
+        {\"reply\": str, \"tool_calls\": list, \"secret_refs_used\": list, \"status\": str, \"requires_approval\": bool, \"pending_command\": str}
+    """
+    graph, initial_state = prepare_agent_state(
+        user_message=user_message,
+        store=store,
+        user_id=user_id,
+        session_id=session_id,
+        tenant_id=tenant_id,
+        history=history,
+        confirmed=confirmed,
+    )
+
+    result = await graph.ainvoke(initial_state)
+    return extract_result_from_state(result, user_message)

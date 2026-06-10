@@ -184,4 +184,38 @@ class ScheduledTaskResponse(BaseModel):
     last_run_output: Optional[str] = None
 
 
+# ============================================================
+# SSE 流式任务模型
+# ============================================================
+
+
+class AgentTaskStatus(str, Enum):
+    """Agent 流式任务状态"""
+    RUNNING = "running"
+    SUCCESS = "success"
+    ERROR = "error"
+    APPROVAL_REQUIRED = "approval_required"
+
+
+class AgentTaskResponse(BaseModel):
+    """Agent 流式任务详情响应。"""
+    task_id: str
+    user_id: str
+    session_id: str
+    user_message: str
+    sanitized_message: Optional[str] = None
+    status: str
+    final_reply: Optional[str] = None
+    total_steps: int = 0
+    created_at: datetime
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
+class AgentTaskStepResponse(BaseModel):
+    """Agent 任务步骤详情。"""
+    step_index: int
+    step_type: str  # sanitized | thinking | tool_start | tool_end | token | approval_required | done | error
+    data: dict = Field(default_factory=dict)
+    created_at: datetime
 

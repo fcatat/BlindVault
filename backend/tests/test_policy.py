@@ -36,7 +36,7 @@ async def test_resolve_success(store, encryption_key):
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_success_test",
@@ -62,7 +62,7 @@ async def test_resolve_wrong_session_allowed(store, encryption_key):
         user_id="test_user",
         session_id="wrong_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_session_test",
@@ -86,7 +86,7 @@ async def test_resolve_wrong_user(store, encryption_key):
         user_id="wrong_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_user_test",
@@ -103,7 +103,7 @@ async def test_resolve_wrong_tool(store, encryption_key):
     await create_test_secret(
         store, encryption_key,
         secret_ref="sec_live_tool_test",
-        allowed_tools=["browser_login_mock"],
+        allowed_tools=["secure_shell"],
     )
 
     ctx = ExecutionContext(
@@ -134,7 +134,7 @@ async def test_resolve_wrong_destination(store, encryption_key):
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_dest_test",
@@ -160,7 +160,7 @@ async def test_resolve_expired_secret(store, encryption_key):
         label="Expired Secret",
         secret_type=SecretType.PASSWORD,
         ciphertext=ciphertext,
-        allowed_tools=["browser_login_mock"],
+        allowed_tools=["secure_shell"],
         allowed_destinations=["https://example.com"],
         created_at=now - timedelta(hours=2),
         expires_at=now - timedelta(hours=1),  # 1 小时前已过期
@@ -174,7 +174,7 @@ async def test_resolve_expired_secret(store, encryption_key):
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_expired_test",
@@ -198,7 +198,7 @@ async def test_resolve_max_reads_exhausted(store, encryption_key):
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_maxread_test",
@@ -227,7 +227,7 @@ async def test_resolve_revoked_secret(store, encryption_key):
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_revoked_test",
@@ -245,7 +245,7 @@ async def test_resolve_nonexistent_secret(store):
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_does_not_exist",
@@ -268,7 +268,7 @@ async def test_resolve_error_message_is_generic(store, encryption_key):
         user_id="wrong_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
     req = ResolveRequest(
         secret_ref="sec_live_generic_err_test",

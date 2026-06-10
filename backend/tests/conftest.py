@@ -24,7 +24,7 @@ from backend.config import Settings, get_settings
 from backend.crypto import encrypt
 from backend.models import ExecutionContext, SecretRecord, SecretStatus, SecretType
 from backend.redis_store import SecretStore
-from backend.tools.browser_login_mock import browser_login_mock, BROWSER_LOGIN_MOCK_SCHEMA
+from backend.tools.secure_shell import secure_shell, SECURE_SHELL_SCHEMA
 from backend.tools.registry import register_tool
 
 # ============================================================
@@ -78,10 +78,10 @@ async def test_client(fake_redis, store, monkeypatch):
 
     # 注册测试工具
     register_tool(
-        name="browser_login_mock",
-        description="模拟浏览器登录",
-        parameters=BROWSER_LOGIN_MOCK_SCHEMA,
-        func=browser_login_mock,
+        name="secure_shell",
+        description="通用安全 Shell 执行器",
+        parameters=SECURE_SHELL_SCHEMA,
+        func=secure_shell,
     )
 
     from backend.main import app
@@ -103,7 +103,7 @@ def test_ctx() -> ExecutionContext:
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
-        tool_name="browser_login_mock",
+        tool_name="secure_shell",
     )
 
 
@@ -138,7 +138,7 @@ async def create_test_secret(
         label="Test Secret",
         secret_type=SecretType.PASSWORD,
         ciphertext=ciphertext,
-        allowed_tools=allowed_tools or ["browser_login_mock"],
+        allowed_tools=allowed_tools or ["secure_shell"],
         allowed_destinations=allowed_destinations or ["https://example.com"],
         created_at=now,
         expires_at=now + timedelta(seconds=ttl_seconds),
