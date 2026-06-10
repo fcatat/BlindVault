@@ -24,6 +24,7 @@ interface Message {
   pendingCommand?: string;
   triggeredRule?: string;
   localModelConfigured?: boolean;
+  isEe?: boolean;
 }
 
 interface ChatProps {
@@ -304,6 +305,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
           leakDetected: resp.leak_detected,
           leakedValue: resp.leaked_value,
           localModelConfigured: resp.local_model_configured,
+          isEe: resp.is_ee,
         };
         setMessages(prev => [...prev, blockAgentMsg]);
         setIsLoading(false);
@@ -321,6 +323,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
         leakDetected: resp.leak_detected,
         leakedValue: resp.leaked_value,
         localModelConfigured: resp.local_model_configured,
+        isEe: resp.is_ee,
       };
 
       setMessages(prev => [...prev, emptyAgentMsg]);
@@ -658,6 +661,10 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                           {msg.localModelConfigured ? (
                             <p className="text-[10px] text-red-700/80 mt-1.5 font-medium">
                               💡 建议您立即在凭证库中创建该密码的安全引用并轮换密钥。当前已启用企业版本地大模型脱敏，但此敏感数据未能成功识别，建议检查本地模型配置或优化脱敏策略。
+                            </p>
+                          ) : msg.isEe ? (
+                            <p className="text-[10px] text-red-700/80 mt-1.5 font-medium">
+                              💡 建议您立即在凭证库中创建该密码的安全引用并轮换密钥。您已拥有企业版权限，请前往左侧 <strong>Local Model Gateway</strong>（本地模型网关）配置本地模型以激活智能脱敏服务。
                             </p>
                           ) : (
                             <p className="text-[10px] text-red-700/80 mt-1.5 font-medium">

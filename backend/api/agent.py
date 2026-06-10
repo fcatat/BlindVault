@@ -61,12 +61,14 @@ async def agent_run(
         if matches:
             first_match = matches[0]
             logger.info("开源版检测到明文凭证，执行拦截。类型: %s", first_match.secret_type)
+            from backend.ee import is_ee_enabled
             return AgentRunResponse(
                 reply="检测到明文凭证，为了系统安全，该指令已被拦截。请到凭证库录入后使用安全引用。",
                 status="credential_detected",
                 credential_detected=True,
                 detected_credential_type=first_match.secret_type,
                 local_model_configured=False,
+                is_ee=is_ee_enabled(),
             )
 
     # ---- 消息预处理：自动检测并保护敏感信息 ----
@@ -121,9 +123,11 @@ async def agent_run(
     result["sanitized_input"] = sanitized_message
 
     # 旁路安全审计检测明文泄漏
+    from backend.ee import is_ee_enabled
     result["leak_detected"] = leaked is not None
     result["leaked_value"] = leaked
     result["local_model_configured"] = local_model_configured
+    result["is_ee"] = is_ee_enabled()
 
     return AgentRunResponse(**result)
 

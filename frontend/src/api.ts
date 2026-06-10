@@ -97,6 +97,7 @@ export interface AgentRunResponse {
   credential_detected?: boolean;
   detected_credential_type?: string;
   local_model_configured?: boolean;
+  is_ee?: boolean;
 }
 
 

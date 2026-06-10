@@ -162,6 +162,7 @@ class AgentRunResponse(BaseModel):
     credential_detected: bool = Field(default=False, description="是否检测到明文凭证（开源版拦截用）")
     detected_credential_type: Optional[str] = Field(default=None, description="检测到的明文凭证类型")
     local_model_configured: bool = Field(default=False, description="企业版本地模型是否已配置")
+    is_ee: bool = Field(default=False, description="当前是否为企业版 License 状态")
 
 
 class ScheduledTaskResponse(BaseModel):
