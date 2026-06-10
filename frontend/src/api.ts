@@ -94,25 +94,11 @@ export interface AgentRunResponse {
   requires_approval?: boolean;
   pending_command?: string;
   triggered_rule?: string;
-  plan?: TaskPlan;
+  credential_detected?: boolean;
+  detected_credential_type?: string;
+  local_model_configured?: boolean;
 }
 
-
-export interface TaskPlanStep {
-  index: number;
-  title: string;
-  command: string;
-  secret_ref: string | null;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
-  stdout: string | null;
-  stderr: string | null;
-}
-
-
-export interface TaskPlan {
-  id: string;
-  steps: TaskPlanStep[];
-}
 
 
 // ---- API 函数 ----
@@ -345,19 +331,6 @@ export interface ScheduledTask {
   last_run_output: string | null;
 }
 
-export interface RunPlanStepPayload {
-  command: string;
-  secret_ref?: string;
-  session_id: string;
-}
-
-export interface RunPlanStepResponse {
-  exit_code: number;
-  stdout: string;
-  stderr: string;
-  status: 'success' | 'error';
-}
-
 export async function listScheduledTasks(sessionId: string): Promise<ScheduledTask[]> {
   const res = await fetch(`${API_BASE}/tasks`, {
     headers: getHeaders(sessionId),
@@ -399,36 +372,5 @@ export async function getScheduledTaskLogs(sessionId: string, taskId: string): P
   return res.json();
 }
 
-export async function runPlanStep(sessionId: string, payload: RunPlanStepPayload): Promise<RunPlanStepResponse> {
-  const res = await fetch(`${API_BASE}/agent/run_plan_step`, {
-    method: 'POST',
-    headers: getHeaders(sessionId),
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await throwError(res);
-  return res.json();
-}
-
-
-export interface HealPlanStepPayload {
-  command: string;
-  stderr: string;
-  session_id: string;
-}
-
-export interface HealPlanStepResponse {
-  suggested_command: string;
-  analysis: string;
-}
-
-export async function healPlanStep(sessionId: string, payload: HealPlanStepPayload): Promise<HealPlanStepResponse> {
-  const res = await fetch(`${API_BASE}/agent/heal_plan_step`, {
-    method: 'POST',
-    headers: getHeaders(sessionId),
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) await throwError(res);
-  return res.json();
-}
 
 

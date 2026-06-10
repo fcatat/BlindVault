@@ -64,18 +64,10 @@ def _register_tools() -> None:
     except ImportError:
         logging.getLogger(__name__).warning("secure_shell 工具未就绪，跳过注册")
 
-    # 注册步骤规划与计划任务工具
+    # 注册计划任务工具
     from backend.tools.task_plans import (
-        GENERATE_TASK_PLAN_SCHEMA,
         CREATE_SCHEDULED_TASK_SCHEMA,
-        generate_task_plan,
         create_scheduled_task_tool,
-    )
-    register_tool(
-        name="generate_task_plan",
-        description="用于多步骤、复合的复杂运维任务步骤拆解规划。AI 将先输出执行步骤，等待用户核对或手动执行。",
-        parameters=GENERATE_TASK_PLAN_SCHEMA,
-        func=generate_task_plan,
     )
     register_tool(
         name="create_scheduled_task",

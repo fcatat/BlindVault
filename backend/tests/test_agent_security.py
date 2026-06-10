@@ -163,3 +163,123 @@ async def test_agent_approval_required(mock_llm, mock_settings):
         assert res2["status"] == "success"
         assert res2["requires_approval"] is False
         assert "已授权" in res2["reply"]
+
+
+@pytest.mark.asyncio
+async def test_agent_api_history_sanitization(test_client):
+    """测试 /api/agent/run 接口是否能自动对 history 中的 user 消息进行脱敏保护。"""
+    response = await test_client.post(
+        "/api/agent/run",
+        json={
+            "user_message": "你看着弄",
+            "session_id": "session_history_test",
+            "history": [
+                {"role": "user", "content": "我的密码是 1qazxsw2 帮我登录"},
+                {"role": "assistant", "content": "好的，我会为您处理"},
+            ],
+            "confirmed": False,
+        },
+        headers={
+            "X-User-Id": "user_history_test",
+            "X-Session-Id": "session_history_test",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # 因为 history 里的明文密码被脱敏了，所以应该产生了 secret_refs
+    assert "secret_refs_used" in data
+    assert len(data["secret_refs_used"]) > 0
+    ref = data["secret_refs_used"][0]
+    assert ref.startswith("sec_live_")
+
+    # 且返回结果中应该包含了 sanitized_input
+    assert data["sanitized_input"] == "你看着弄"
+
+
+@pytest.mark.asyncio
+async def test_agent_run_open_source_intercept(test_client, monkeypatch):
+    """测试开源版下正则匹配到敏感凭证后被拦截，不调用 Agent 直接返回拦截状态。"""
+    from backend.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "local_model_url", "")
+
+    response = await test_client.post(
+        "/api/agent/run",
+        json={
+            "user_message": "帮我登录，密码是 1qazxsw2",
+            "session_id": "session_intercept_test",
+            "history": [],
+            "confirmed": False,
+        },
+        headers={
+            "X-User-Id": "user_intercept_test",
+            "X-Session-Id": "session_intercept_test",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["credential_detected"] is True
+    assert data["detected_credential_type"] == "password"
+    assert data["status"] == "credential_detected"
+    assert data["local_model_configured"] is False
+    assert "拦截" in data["reply"]
+
+
+@pytest.mark.asyncio
+async def test_agent_run_enterprise_auto_sanitize(test_client, monkeypatch):
+    """测试企业版下正则匹配到敏感凭证后不拦截，而是自动脱敏生成临时凭证并放行执行。"""
+    from backend.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "local_model_url", "http://localhost:8000/v1")
+
+    response = await test_client.post(
+        "/api/agent/run",
+        json={
+            "user_message": "帮我登录，密码是 1qazxsw2",
+            "session_id": "session_enterprise_test",
+            "history": [],
+            "confirmed": False,
+        },
+        headers={
+            "X-User-Id": "user_enterprise_test",
+            "X-Session-Id": "session_enterprise_test",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["credential_detected"] is False
+    assert data["local_model_configured"] is True
+    assert len(data["secret_refs_used"]) > 0
+    assert data["secret_refs_used"][0].startswith("sec_live_")
+
+
+@pytest.mark.asyncio
+async def test_agent_run_audit_bypass_leak(test_client, monkeypatch):
+    """测试审计层触发明文外泄时，放行指令执行，并在响应中标记 leak_detected 和 leaked_value。"""
+    from backend.config import get_settings
+    settings = get_settings()
+    monkeypatch.setattr(settings, "local_model_url", "")
+
+    # 三元组匹配审计层：IP root 密码
+    response = await test_client.post(
+        "/api/agent/run",
+        json={
+            "user_message": "连接到 10.14.101.22 root 1qazxsw2 获取日志",
+            "session_id": "session_audit_test",
+            "history": [],
+            "confirmed": False,
+        },
+        headers={
+            "X-User-Id": "user_audit_test",
+            "X-Session-Id": "session_audit_test",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # 应当放行，且 leak_detected=True 标记成功
+    assert data["credential_detected"] is False
+    assert data["leak_detected"] is True
+    assert data["leaked_value"] == "1qazxsw2"
+
+

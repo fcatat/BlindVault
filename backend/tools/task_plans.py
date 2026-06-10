@@ -8,35 +8,6 @@ from backend.db import save_scheduled_task
 
 logger = logging.getLogger(__name__)
 
-# generate_task_plan JSON Schema 定义
-GENERATE_TASK_PLAN_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "steps": {
-            "type": "array",
-            "description": "按顺序执行的步骤列表，必须拆解为最小粒度、安全的单步操作命令",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "步骤的简要标题，例如 '启动 Nginx 容器'"
-                    },
-                    "command": {
-                        "type": "string",
-                        "description": "要执行的具体 Shell 命令，如果有密码则用 $SECRET 占位"
-                    },
-                    "secret_ref": {
-                        "type": "string",
-                        "description": "可选，该步骤命令需要解密替换使用的凭据引用 {{secret:sec_xxx}} 中的 sec_xxx"
-                    }
-                },
-                "required": ["title", "command"]
-            }
-        }
-    },
-    "required": ["steps"]
-}
 
 # create_scheduled_task JSON Schema 定义
 CREATE_SCHEDULED_TASK_SCHEMA = {
@@ -67,14 +38,6 @@ CREATE_SCHEDULED_TASK_SCHEMA = {
 }
 
 
-async def generate_task_plan(steps: list[dict], **kwargs) -> dict:
-    """生成复合多步骤执行计划。"""
-    logger.info("生成步骤计划: steps_count=%d", len(steps))
-    return {
-        "status": "plan_generated",
-        "steps": steps,
-        "message": "多步骤计划已成功生成，等待前端拉起控制面板执行。"
-    }
 
 
 async def create_scheduled_task_tool(

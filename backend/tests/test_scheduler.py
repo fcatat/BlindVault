@@ -110,34 +110,3 @@ async def test_scheduled_task_execution_mocked():
     # 清除测试任务
     await delete_scheduled_task(task_id)
 
-
-@pytest.mark.asyncio
-async def test_api_run_plan_step(test_client):
-    """验证单步运行 API (POST /api/agent/run_plan_step)。"""
-    mock_res = {
-        "status": "success",
-        "stdout": "Step execution success",
-        "stderr": "",
-        "exit_code": 0
-    }
-
-    with patch("backend.api.agent.secure_shell", return_value=mock_res) as mock_ssh:
-        response = await test_client.post(
-            "/api/agent/run_plan_step",
-            json={
-                "command": "echo 'step test'",
-                "secret_ref": None,
-                "session_id": "test_session_id"
-            },
-            headers={
-                "X-User-Id": "test_user",
-                "X-Tenant-Id": "default"
-            }
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "success"
-    assert data["exit_code"] == 0
-    assert data["stdout"] == "Step execution success"
-    mock_ssh.assert_called_once()

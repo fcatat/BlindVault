@@ -147,23 +147,6 @@ class AgentRunRequest(BaseModel):
     confirmed: bool = Field(default=False, description="高危操作是否已被用户确认")
 
 
-class TaskPlanStep(BaseModel):
-    """单步执行计划步骤。"""
-    index: int
-    title: str
-    command: str
-    secret_ref: Optional[str] = None
-    status: str = "pending"  # pending | running | success | failed | skipped
-    stdout: Optional[str] = None
-    stderr: Optional[str] = None
-
-
-class TaskPlan(BaseModel):
-    """多步骤任务计划。"""
-    id: str
-    steps: list[TaskPlanStep]
-
-
 class AgentRunResponse(BaseModel):
     """Agent 运行响应。"""
     reply: str
@@ -176,35 +159,9 @@ class AgentRunResponse(BaseModel):
     requires_approval: bool = Field(default=False, description="是否需要用户确认")
     pending_command: Optional[str] = Field(default=None, description="等待审批的高危命令")
     triggered_rule: Optional[str] = Field(default=None, description="触发的高危拦截规则")
-    plan: Optional[TaskPlan] = Field(default=None, description="多步骤执行计划（若生成）")
-
-
-class RunPlanStepRequest(BaseModel):
-    """单步计划执行请求。"""
-    command: str = Field(..., min_length=1, description="待执行命令")
-    secret_ref: Optional[str] = Field(default=None, description="绑定的凭据引用")
-    session_id: str = Field(..., min_length=1, description="会话 ID")
-
-
-class RunPlanStepResponse(BaseModel):
-    """单步计划执行结果。"""
-    exit_code: int
-    stdout: str
-    stderr: str
-    status: str
-
-
-class HealPlanStepRequest(BaseModel):
-    """单步自愈请求。"""
-    command: str = Field(..., description="失败的命令")
-    stderr: str = Field(..., description="失败的报错日志")
-    session_id: str = Field(..., description="会话 ID")
-
-
-class HealPlanStepResponse(BaseModel):
-    """单步自愈响应。"""
-    suggested_command: str = Field(..., description="修正后的建议命令")
-    analysis: str = Field(..., description="报错分析与自愈思路")
+    credential_detected: bool = Field(default=False, description="是否检测到明文凭证（开源版拦截用）")
+    detected_credential_type: Optional[str] = Field(default=None, description="检测到的明文凭证类型")
+    local_model_configured: bool = Field(default=False, description="企业版本地模型是否已配置")
 
 
 class ScheduledTaskResponse(BaseModel):
