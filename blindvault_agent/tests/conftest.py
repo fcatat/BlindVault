@@ -41,6 +41,15 @@ os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 # ============================================================
 
 
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """每个测试前清除 settings 缓存，确保使用 conftest 设置的密钥。"""
+    os.environ["BLINDVAULT_ENCRYPTION_KEY"] = TEST_KEY_B64
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest_asyncio.fixture
 async def fake_redis():
     """创建 fakeredis 异步客户端。"""

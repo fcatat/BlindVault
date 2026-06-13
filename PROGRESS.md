@@ -28,6 +28,34 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-13 23:56 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#18 PII 兜底 middleware + #19 secure_shell 工具 🔴 **待 review**
+- 完成度：代码完成，待人工/强模型 review
+- 动过的文件：
+  - 新增 blindvault_agent/middleware/pii_backstop.py（拦截点 A 兜底层，BLOCK 模式）
+  - 新增 blindvault_agent/tools/secure_shell.py（拦截点 B 注入，从 backend/ 迁移 + 改用可注入执行器）
+  - 新增 blindvault_agent/tests/test_pii_backstop.py（16 个测试）
+  - 新增 blindvault_agent/tests/test_secure_shell.py（13 个测试）
+  - 更新 blindvault_agent/tests/conftest.py（增加 autouse settings 缓存清除，修复跨文件密钥冲突）
+- #18 设计要点：
+  - PIIBackstopMiddleware：BLOCK 模式，不可逆，不回写金库
+  - 5 种检测规则：高熵 token、连接串、私钥、password 赋值、AWS Key
+  - 已被主层处理的 {{secret:xxx}} 占位符不触发误报
+  - 核心验收：主层处理后放行，但遗漏的凭证被兜底层阻断
+- #19 设计要点：
+  - 三种引用格式都能 resolve：{{secret:sec_xxx}} / $SECRET / 裸 sec_live_xxx
+  - 危险命令拦截（rm -rf、mkfs、curl|bash 等）
+  - 回显脱敏（真实密码→[REDACTED]）
+  - 执行器可注入（生产用沙箱/测试用 mock）
+  - 明文用完即弃（finally 块清除引用）
+- 验收结果：62 个测试全绿（policy 15 + 脱敏 18 + PII 16 + shell 13）
+- ⚠️ review 要点：
+  1. PII 兜底规则覆盖率和误报率
+  2. secure_shell 的 resolve 路径是否有遗漏
+  3. 回显脱敏是否覆盖所有输出路径
+- 下一步：#20 HITL 审批 + Redis checkpointer
+- 提交：待提交
+
 ## 2026-06-13 23:32 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#15 review 通过 + #17 可逆脱敏 middleware 🔴 **待 review**
 - 完成度：
