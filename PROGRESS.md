@@ -28,6 +28,34 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-13 23:23 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#16 LiteLLM 网关配置
+- 完成度：done
+- 动过的文件：docs/litellm-gateway.md（新增网关配置文档）、blindvault_agent/verify_gateway.py（验收脚本）
+- 验收结果：同一份 create_blindvault_agent 代码，改 model alias 即可在 GPT(gpt-5.4-mini) 和 Claude(claude-sonnet-4-6) 间切换，virtual key 生效
+- 说明：LiteLLM 网关已远程部署（aigateway.sunmi.com），无需本地 compose 服务。Agent 通过 ChatOpenAI(base_url=网关) 接入
+- 下一步具体动作：等 #15 review 通过后，开始 #17 可逆脱敏 middleware（🔴 安全关键）
+- 卡点/注意：#17-#20 均标 🔴，须写草稿待 review
+- 提交：待提交
+
+## 2026-06-13 23:22 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#15 迁移复用安全资产 🔴 **待 review**
+- 完成度：代码完成，待人工/强模型 review 后提交
+- 动过的文件：
+  - 新增 blindvault_agent/security/{config.py, crypto.py, policy.py, redis_store.py, models.py}（从 backend/ 原样复制 + 调 import 路径）
+  - 新增 blindvault_agent/tests/{conftest.py, test_policy.py}（测试迁移）
+  - 更新 blindvault_agent/security/__init__.py（re-exports）
+- 迁移原则：**仅搬运 + 调 import 路径（backend.xxx → blindvault_agent.security.xxx），未改任何逻辑**
+- 验收结果：test_policy.py 15 个测试全绿（9 步校验链完整）；原 backend 测试也全绿未被破坏
+- ⚠️ review 要点：
+  1. 确认 import 路径替换完整正确，无遗漏
+  2. 确认未趁迁移改任何逻辑（diff 应只有 import 行变化）
+  3. 确认 security/config.py 中的 `get_settings()` 提供的 `encryption_key_bytes` 与原版一致
+  4. Pyrefly lint 报 redis_store.py async 类型错误——与原文件一致，是 linter 对 redis.asyncio 的误报，不影响运行
+- 下一步具体动作：等 review 通过后提交；同时可并行开始 #16 LiteLLM 网关配置
+- 卡点/注意：🔴 安全关键代码，必须 review 后才提交
+- 提交：未提交（待 review）
+
 ## 2026-06-13 23:18 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#14 工程骨架 + 依赖
 - 完成度：done
