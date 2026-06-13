@@ -1,6 +1,12 @@
+[project]
+name = "blindvault"
+version = "0.1.0"
+description = "安全运维 Agent — 密码绝不进模型上下文，高危操作强制人工确认"
+requires-python = ">=3.11"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["backend/tests"]
+testpaths = ["backend/tests", "blindvault_agent/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

@@ -28,6 +28,20 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-13 23:18 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#14 工程骨架 + 依赖
+- 完成度：done
+- 动过的文件：blindvault_agent/（新建整个包：__init__.py、config.py、agent.py、middleware/、tools/、security/、tests/、verify_skeleton.py）、requirements.txt（锁版本）、pyproject.toml（加 project 元数据 + 新测试路径）
+- 验收结果：
+  1. ✅ 包导入：blindvault_agent v0.1.0
+  2. ✅ 配置加载：pydantic-settings 从 .env + 环境变量加载（env_prefix=BLINDVAULT_，extra=ignore）
+  3. ✅ Agent 创建 + Redis 连接：create_blindvault_agent() → CompiledStateGraph，Redis checkpointer 初始化通过
+  4. ✅ LiteLLM 连通：echo 工具调用成功（gpt-5.4-mini 经 aigateway.sunmi.com）
+- 新包结构：blindvault_agent/{config,agent,middleware/,tools/,security/,tests/}
+- 下一步具体动作：开始 #15 迁移复用安全资产（crypto.py/policy.py/redis_store.py/models.py → blindvault_agent/security/）
+- 卡点/注意：#15 标 🔴（review 迁移正确性）；迁移时不要改逻辑，仅搬运 + 调 import 路径
+- 提交：2043137
+
 ## 2026-06-13 23:05 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#13 Phase 0 Spike 排雷
 - 完成度：done ✅ 四条验收全绿
