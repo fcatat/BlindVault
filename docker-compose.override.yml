@@ -1,0 +1,10 @@
+services:
+  backend:
+    environment:
+      - BLINDVAULT_EE_LICENSE=trial_license_key
+  redis:
+    ports:
+      - "6379:6379"
+  postgres:
+    ports:
+      - "5433:5432"

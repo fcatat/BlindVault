@@ -20,13 +20,26 @@
 - [x] 旧版安全审查 + 清理（去内置正则、删 mock、补测试）
 - [x] 方向确定：独立产品 + LangChain create_agent + LiteLLM 网关
 - [x] 产品设计文档 / MVP 计划 / 任务规格 / 协作脚手架
-- [ ] Phase 0：Spike 排雷（#13）
+- [x] Phase 0：Spike 排雷（#13）✅ 四条全绿
 - [ ] Phase 1：MVP（#14–#22）
 - [ ] 端到端验收（#22）
 
 ---
 
 ## 交接日志（最新在上）
+
+## 2026-06-13 23:05 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#13 Phase 0 Spike 排雷
+- 完成度：done ✅ 四条验收全绿
+- 动过的文件：spike/spike_1_dual_model.py、spike/spike_2_hitl.py、spike/spike_3_middleware.py、spike/README.md、docker-compose.yml（Redis→Redis Stack）、docker-compose.override.yml（加 Redis 端口映射）
+- Spike 验收结果：
+  1. ✅ 双模型路由：经 LiteLLM 网关（aigateway.sunmi.com），GPT(gpt-5.4-mini) 和 Claude(claude-sonnet-4-6) 都成功调用 `get_current_time` 工具
+  2. ✅ HITL + Redis Checkpointer：`HumanInTheLoopMiddleware` 在工具调用处暂停 → Redis 持久化 12 个 checkpoint key → `Command(resume={"decisions":[{"type":"approve"}]})` 恢复执行 → 工具成功返回
+  3. ✅ 自定义 Middleware：装饰器式 `@before_model` 成功拦截消息列表，将 `password123` → `{{secret:sec_001}}`、`mysql://root:p@ssw0rd@db:3306` → `{{secret:sec_003}}`；类式 `AgentMiddleware` 也能读取完整消息列表
+- 环境变化：Redis 镜像改为 redis/redis-stack-server（langgraph-checkpoint-redis 需要 RedisJSON+RediSearch）；venv 追加安装 langchain 1.3.9、langgraph 1.2.5、langchain-openai、langgraph-checkpoint-redis 0.4.1
+- 下一步具体动作：开始 #14 工程骨架 + 依赖锁定
+- 卡点/注意：LiteLLM 是远程网关（aigateway.sunmi.com），不需要本地安装 litellm Python 包；HITL resume 格式必须是 `{"decisions": [{"type": "approve"}]}`（非简单字符串）
+- 提交：5c80129
 
 ## 2026-06-13 — Claude Code (Opus 4.8)
 - 当前任务：协作脚手架搭建（AGENTS.md / CLAUDE.md / PROGRESS.md / docs/tasks.md）
