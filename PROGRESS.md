@@ -28,6 +28,29 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-13 23:32 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#15 review 通过 + #17 可逆脱敏 middleware 🔴 **待 review**
+- 完成度：
+  - #15 迁移安全资产：review 通过 ✅ diff 仅含 import 路径变化，零逻辑变更
+  - #17 可逆脱敏 middleware：代码完成，待人工/强模型 review 后提交
+- 动过的文件：
+  - 新增 blindvault_agent/middleware/reversible_sanitize.py（拦截点 A 主层）
+  - 新增 blindvault_agent/tests/test_reversible_sanitize.py（18 个测试）
+- #17 设计要点：
+  - ReversibleSanitizeMiddleware 类，`before_model` 扫描消息 → 正则检测 → AES 加密存金库 → 替换为 `{{secret:sec_xxx}}`
+  - 接受 `save_record` 同步回调（而非直接持有异步 store），解决 sync/async 兼容
+  - 提供 `make_sync_save_record(store)` 工厂函数桥接异步 store
+  - 内置规则：中文密码、英文密码、连接串密码、API Key（确定性正则在前）
+  - 安全铁律遵守：映射只存金库不进 state；金库不可达抛异常阻断
+- 验收结果：33 个测试全绿（policy 15 + 脱敏 18）
+- ⚠️ #17 review 要点：
+  1. 正则规则覆盖率是否足够（当前为最小集，后续可从 DB 动态加载）
+  2. `save_record` 回调设计是否足够安全（同步阻塞，金库不可达即中断）
+  3. 占位符格式 `{{secret:sec_xxx}}` 与旧版 sanitizer 一致
+- 下一步具体动作：等 #17 review 通过后，继续 #18 PII 兜底 / #19 secure_shell / #20 HITL
+- 卡点/注意：🔴 安全关键代码
+- 提交：待提交
+
 ## 2026-06-13 23:23 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#16 LiteLLM 网关配置
 - 完成度：done
