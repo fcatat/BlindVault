@@ -28,6 +28,22 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-13 23:58 — Antigravity (Claude Opus 4.6 Thinking)
+- 当前任务：#20 HITL 审批 + Redis checkpointer 🔴 **待 review**
+- 完成度：代码完成，待人工/强模型 review
+- 动过的文件：
+  - 新增 blindvault_agent/middleware/hitl.py（拦截点 B 审批，HITL middleware 工厂 + 高危命令规则）
+  - 新增 blindvault_agent/tests/test_hitl.py（18 个测试）
+- #20 设计要点：
+  - `is_command_high_risk()`：13 种高危命令正则（rm -rf、mkfs、dd、shutdown、DROP DATABASE 等）
+  - `create_hitl_middleware()`：工厂函数创建 HumanInTheLoopMiddleware，拦截 secure_shell 调用
+  - 审批时命令中只有占位符 {{secret:xxx}}，不含明文密钥
+  - 明文只在 approve 后由 resolve_secret 瞬间注入，reject 则永不出现
+  - Redis checkpointer 已在 spike #13 验证（暂停→存 Redis→恢复续跑）
+- 验收结果：80 个测试全绿（policy 15 + 脱敏 18 + PII 16 + shell 13 + HITL 18）
+- 下一步：#21 薄入口 API/CLI
+- 提交：待提交
+
 ## 2026-06-13 23:56 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#18 PII 兜底 middleware + #19 secure_shell 工具 🔴 **待 review**
 - 完成度：代码完成，待人工/强模型 review
