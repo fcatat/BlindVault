@@ -41,7 +41,8 @@ TEST_KEY_B64 = base64.urlsafe_b64encode(TEST_KEY_RAW).decode()
 
 os.environ["BLINDVAULT_ENCRYPTION_KEY"] = TEST_KEY_B64
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"  # 不会真正使用
-os.environ["LLM_PROVIDER"] = "mock"
+os.environ["LLM_PROVIDER"] = "openai"
+os.environ["LLM_API_KEY"] = "test-fake-key"
 os.environ["DATABASE_URL"] = "postgresql://blindvault:blindvault_default_pg_pass@127.0.0.1:5433/blindvault"
 
 
@@ -83,6 +84,17 @@ async def test_client(fake_redis, store, monkeypatch):
         parameters=SECURE_SHELL_SCHEMA,
         func=secure_shell,
     )
+
+    # 用一个确定性的 Fake chatbot 替代 _create_openai_chatbot，避免发起真实 LLM 请求
+    from langchain_core.messages import AIMessage
+    import backend.agent.graph as graph_mod
+
+    def _fake_chatbot_factory():
+        def chatbot(state):
+            return {"messages": [AIMessage(content="ok")]}
+        return chatbot
+
+    monkeypatch.setattr(graph_mod, "_create_openai_chatbot", _fake_chatbot_factory)
 
     from backend.main import app
     transport = ASGITransport(app=app)

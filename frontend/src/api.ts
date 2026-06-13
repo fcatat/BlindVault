@@ -294,7 +294,7 @@ export async function updateConfig(payload: LLMConfigUpdate): Promise<LLMConfig>
 
 export interface ConnectionCheckResult {
   success: boolean;
-  status: 'connected' | 'auth_error' | 'network_error' | 'mock';
+  status: 'connected' | 'auth_error' | 'network_error';
   detail: string;
 }
 

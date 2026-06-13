@@ -2,6 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# 0. 换 Debian + pip 为国内镜像源，避免境外网络卡顿
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources; \
+    fi; \
+    if [ -f /etc/apt/sources.list ]; then \
+        sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list; \
+    fi; \
+    pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
 # 1. 安装诊断沙箱运行所需要的系统及运维工具依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
@@ -25,11 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. 安装 Kubernetes 命令行工具 kubectl（自适应 CPU 架构）
+# 2. 安装 Kubernetes 命令行工具 kubectl（自适应 CPU 架构，使用阿里云镜像）
 RUN arch=$(uname -m) && \
     if [ "$arch" = "x86_64" ]; then arch="amd64"; fi && \
     if [ "$arch" = "aarch64" ]; then arch="arm64"; fi && \
-    curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.0/bin/linux/${arch}/kubectl" && \
+    curl -fsSL -o /usr/local/bin/kubectl "https://mirrors.aliyun.com/kubernetes/release/v1.30.0/bin/linux/${arch}/kubectl" && \
     chmod +x /usr/local/bin/kubectl
 
 # 3. 安装沙箱 RPC 服务极简依赖

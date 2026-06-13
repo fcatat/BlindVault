@@ -48,7 +48,7 @@ class LLMConfigResponse(BaseModel):
 
 class LLMConfigUpdate(BaseModel):
     """LLM 配置更新请求。"""
-    llm_provider: str  # "openai" | "mock"
+    llm_provider: str  # "openai"
     llm_model: str
     llm_base_url: str = ""
     llm_api_key: str = ""  # 空串 = 不更新
@@ -176,7 +176,7 @@ async def update_config(payload: LLMConfigUpdate):
 class ConnectionCheckResponse(BaseModel):
     """LLM 连通性检测响应。"""
     success: bool
-    status: str  # "connected" | "auth_error" | "network_error" | "mock"
+    status: str  # "connected" | "auth_error" | "network_error"
     detail: str = ""
 
 
@@ -185,17 +185,10 @@ async def check_llm_connection():
     """实时检测当前 LLM 网关和 API Key 的连通性。"""
     settings = get_settings()
 
-    if settings.llm_provider == "mock":
-        return ConnectionCheckResponse(
-            success=True, 
-            status="mock", 
-            detail="Mock 模式无需验证连通性"
-        )
-
     if not settings.llm_api_key:
         return ConnectionCheckResponse(
-            success=False, 
-            status="auth_error", 
+            success=False,
+            status="auth_error",
             detail="未配置 API Key"
         )
 
@@ -268,16 +261,15 @@ class PatternItem(BaseModel):
 
 @router.get("/patterns", response_model=list[PatternItem])
 async def get_patterns():
-    """获取所有脱敏正则规则。"""
+    """获取所有脱敏正则规则。完全以 DB 为准，DB 为空即返回空列表。"""
     from backend.db import load_config
-    from backend.sanitizer import DEFAULT_PATTERNS
     try:
         data_str = await load_config("sanitizer_patterns")
         if data_str:
             return json.loads(data_str)
     except Exception as e:
-        logger.warning("从数据库加载正则失败，返回默认规则: %s", str(e))
-    return DEFAULT_PATTERNS
+        logger.warning("从数据库加载正则失败: %s", str(e))
+    return []
 
 
 @router.get("/patterns/audit", response_model=list[PatternItem])
@@ -343,10 +335,10 @@ async def generate_regex(payload: RegexGenerateRequest):
     使用 AI 根据用户的自然语言描述和样例内容，生成脱敏正则表达式并提取字段。
     """
     settings = get_settings()
-    if settings.llm_provider == "mock" or not settings.llm_api_key:
+    if not settings.llm_api_key:
         raise HTTPException(
             status_code=400,
-            detail="请先在 [Agent 配置] 页面配置好 LLM API Key 并切换为 OpenAI 模式，以使用 AI 生成正则功能。",
+            detail="请先在 [Agent 配置] 页面配置好 LLM API Key，以使用 AI 生成正则功能。",
         )
 
     # 引入 LangChain 客户端调用

@@ -118,145 +118,6 @@ SYSTEM_PROMPT = (
 
 
 # ============================================================
-# Mock LLM 节点（开发/测试用）
-# ============================================================
-
-
-def _mock_chatbot(state: AgentState) -> dict:
-    """
-    Mock LLM：根据关键词自动构造 tool_call 或直接回复。
-
-    规则：
-    - 消息包含 "cron" / "every" / "定时" / "每天" → 构造 create_scheduled_task
-    - 消息包含 "nginx" / "docker" / "镜像" / "自愈" → 自动生成带错命令并在失败时自主纠错重试
-    - 消息包含 "plan" / "步骤" / "部署" / "复合" → 构造 generate_task_plan
-    - 否则 → 文本回复
-    """
-    messages = state["messages"]
-    last_msg = messages[-1]
-    loop_count = state.get("loop_count", 0)
-
-    content = ""
-    if hasattr(last_msg, "content"):
-        content = last_msg.content if isinstance(last_msg.content, str) else str(last_msg.content)
-
-    # 检测是否是工具执行结果返回
-    from langchain_core.messages import ToolMessage
-    if isinstance(last_msg, ToolMessage):
-        # 自动分析是否有前置失败的 docker run 步骤，如果有则启动自愈重试逻辑
-        is_nginx_fail = "nginx-test" in str(messages[-2].tool_calls) if len(messages) >= 2 and hasattr(messages[-2], "tool_calls") and messages[-2].tool_calls else False
-        
-        if is_nginx_fail and loop_count == 1:
-            # 第一轮失败，大模型自主识别报错，修正参数，重新尝试
-            return {
-                "messages": [
-                    AIMessage(
-                        content=(
-                            "⚠️ **Agent 自动纠错与自愈执行**：\n"
-                            "前置部署命令由于无效参数 `--invalid-flag` 运行失败。\n\n"
-                            "**[报错原因分析]**：Docker CLI 不支持 `--invalid-flag` 标志参数，导致进程异常终止退出（Exit Code 125）。\n"
-                            "**[自主修复策略]**：我已自动为您剔除无效参数，并更改使用稳定指令 `docker run -d -p 8888:80 --name nginx-test nginx:alpine` 重新提交沙箱执行尝试！"
-                        ),
-                        tool_calls=[
-                            {
-                                "id": f"call_{uuid.uuid4().hex[:8]}",
-                                "name": "secure_shell",
-                                "args": {
-                                    "command": "docker run -d -p 8888:80 --name nginx-test nginx:alpine"
-                                }
-                            }
-                        ]
-                    )
-                ]
-            }
-        else:
-            # 无论之前的工具调用是什么，如果运行成功，或者是重试后的最终结果
-            return {
-                "messages": [
-                    AIMessage(
-                        content=(
-                            "🎉 **运维部署成功**！命令已在安全隔离的沙箱环境内运行完毕。\n\n"
-                            "**[最终执行结果]**：\n"
-                            "```bash\n"
-                            "88b901a2432a514d2e8ab5df62002fcf650b8123... (Container ID)\n"
-                            "```\n"
-                            "**[服务运行状态]**：自愈重试部署成功！目前 Nginx 容器已正常在后台映射端口 `8888` 运行。"
-                        )
-                    )
-                ]
-            }
-
-    # 定时任务关键词匹配
-    is_cron = bool(re.search(r"cron|every|定时|每天|每10秒", content, re.IGNORECASE))
-    secret_refs = _SECRET_REF_EXTRACT.findall(content)
-
-    if is_cron:
-        expr = "*/10 * * * *"
-        if "每10秒" in content:
-            expr = "*/10 * * * * * mock"  # 特殊的 mock cron 用来测试
-        elif "每天" in content:
-            expr = "0 2 * * *"
-        return {
-            "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[
-                        {
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "name": "create_scheduled_task",
-                            "args": {
-                                "command": "echo 'run task' && date",
-                                "label": "定时任务执行",
-                                "cron_expression": expr,
-                                "secret_ref": secret_refs[0] if secret_refs else None
-                            }
-                        }
-                    ]
-                )
-            ]
-        }
-
-    # 复杂部署与纠错自愈场景测试
-    is_plan_or_deploy = bool(re.search(r"plan|步骤|部署|复合|nginx|docker|镜像|跑起来|纠错|自愈|测试", content, re.IGNORECASE))
-    if is_plan_or_deploy:
-        return {
-            "messages": [
-                AIMessage(
-                    content=(
-                        "📝 **任务复杂度分析**：该运维部署任务属于复合操作，我已为您自动生成执行计划：\n"
-                        "1. 拉取 `nginx:alpine` 镜像并尝试在 8888 端口启动容器；\n"
-                        "2. 检查本地服务连通性。\n\n"
-                        "正在自动执行第一步..."
-                    ),
-                    tool_calls=[
-                        {
-                            "id": f"call_{uuid.uuid4().hex[:8]}",
-                            "name": "secure_shell",
-                            "args": {
-                                "command": "docker run -d -p 8888:80 --name nginx-test --invalid-flag nginx:alpine"
-                            }
-                        }
-                    ]
-                )
-            ]
-        }
-
-    # 默认回复
-    return {
-        "messages": [
-            AIMessage(
-                content=(
-                    "你好！我是 BlindVault 安全助手。\n"
-                    "我可以帮你使用安全工具执行操作。\n"
-                    "请告诉我你需要做什么，例如：\n"
-                    "「连接到 10.x.x.x root {{secret:sec_live_xxx}} 执行 uptime」"
-                )
-            )
-        ]
-    }
-
-
-# ============================================================
 # OpenAI LLM 节点
 # ============================================================
 
@@ -426,7 +287,6 @@ def _should_use_tools(state: AgentState) -> str:
 def build_agent_graph(
     store: SecretStore,
     ctx: ExecutionContext,
-    use_mock: bool = True,
 ) -> Any:
     """
     构建 LangGraph Agent Graph。
@@ -434,18 +294,14 @@ def build_agent_graph(
     Args:
         store: Redis 存储实例
         ctx: 执行上下文
-        use_mock: 是否使用 mock LLM（默认 True）
 
     Returns:
         编译后的 LangGraph
     """
     graph = StateGraph(AgentState)
 
-    # 1. chatbot 节点
-    if use_mock:
-        graph.add_node("chatbot", _mock_chatbot)
-    else:
-        graph.add_node("chatbot", _create_openai_chatbot())
+    # 1. chatbot 节点（始终使用真实 LLM；测试可通过 monkeypatch 替换）
+    graph.add_node("chatbot", _create_openai_chatbot())
 
     # 2. secure_tools 节点（使用 partial 注入 store 和 ctx）
     async def _tool_node(state: dict) -> dict:
@@ -493,7 +349,6 @@ def prepare_agent_state(
         (compiled_graph, initial_state)
     """
     settings = get_settings()
-    use_mock = settings.llm_provider == "mock"
 
     ctx = ExecutionContext(
         user_id=user_id,
@@ -502,7 +357,7 @@ def prepare_agent_state(
         tool_name="",  # 由 tool node 动态设置
     )
 
-    graph = build_agent_graph(store=store, ctx=ctx, use_mock=use_mock)
+    graph = build_agent_graph(store=store, ctx=ctx)
 
     # Build message list from history + current message
     history_messages = []

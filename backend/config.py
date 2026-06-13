@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     redis_key_prefix: str = "blindvault:"
 
     # ---- LLM ----
-    llm_provider: str = "mock"  # openai / mock
+    llm_provider: str = "openai"  # openai (固定，已不再支持 mock)
     llm_model: str = "gpt-4o"
     llm_api_key: str = ""
     llm_base_url: str = ""

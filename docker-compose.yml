@@ -46,7 +46,7 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://blindvault:${PG_PASSWORD:-blindvault_default_pg_pass}@postgres:5432/blindvault
       - SANDBOX_URL=http://sandbox:8001
-      - LLM_PROVIDER=${LLM_PROVIDER:-mock}
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
       - LLM_MODEL=${LLM_MODEL:-}
       - LLM_BASE_URL=${LLM_BASE_URL:-}
       - LLM_API_KEY=${LLM_API_KEY:-}

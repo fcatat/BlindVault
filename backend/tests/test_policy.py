@@ -283,3 +283,120 @@ async def test_resolve_error_message_is_generic(store, encryption_key):
     assert error_msg == "Secret resolution denied"
     assert "user" not in error_msg.lower()
     assert "mismatch" not in error_msg.lower()
+
+
+# ============================================================
+# 9 项校验链补完
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_resolve_wrong_tenant(store, encryption_key):
+    """租户不匹配应当拒绝（第 5 步）。"""
+    await create_test_secret(
+        store, encryption_key,
+        secret_ref="sec_live_tenant_test",
+        tenant_id="tenant_a",
+    )
+    ctx = ExecutionContext(
+        user_id="test_user",
+        session_id="test_session",
+        tenant_id="tenant_b",
+        tool_name="secure_shell",
+    )
+    req = ResolveRequest(
+        secret_ref="sec_live_tenant_test",
+        destination="https://example.com",
+    )
+    with pytest.raises(SecretResolutionError):
+        await resolve_secret(store, ctx, req)
+
+
+@pytest.mark.asyncio
+async def test_resolve_destination_wildcard(store, encryption_key):
+    """allowed_destinations=['*'] 应放行所有 destination。"""
+    await create_test_secret(
+        store, encryption_key,
+        secret_ref="sec_live_wildcard_test",
+        allowed_destinations=["*"],
+    )
+    ctx = ExecutionContext(
+        user_id="test_user",
+        session_id="test_session",
+        tenant_id="default",
+        tool_name="secure_shell",
+    )
+    req = ResolveRequest(
+        secret_ref="sec_live_wildcard_test",
+        destination="https://anything.example.org/x",
+    )
+    plaintext = await resolve_secret(store, ctx, req)
+    assert plaintext == "super_secret_password_123"
+
+
+@pytest.mark.asyncio
+async def test_resolve_empty_destination_skips_check(store, encryption_key):
+    """request.destination 为空字符串时，不应触发 destination 校验（secure_shell 场景）。"""
+    await create_test_secret(
+        store, encryption_key,
+        secret_ref="sec_live_no_dest_test",
+        allowed_destinations=["https://only-one.example"],
+    )
+    ctx = ExecutionContext(
+        user_id="test_user",
+        session_id="test_session",
+        tenant_id="default",
+        tool_name="secure_shell",
+    )
+    req = ResolveRequest(
+        secret_ref="sec_live_no_dest_test",
+        destination="",
+    )
+    plaintext = await resolve_secret(store, ctx, req)
+    assert plaintext == "super_secret_password_123"
+
+
+@pytest.mark.asyncio
+async def test_resolve_inactive_status_not_revoked(store, encryption_key):
+    """status=EXPIRED（非 ACTIVE 也非 REVOKED）应被拒绝（第 2 步）。"""
+    await create_test_secret(
+        store, encryption_key,
+        secret_ref="sec_live_inactive_test",
+        status=SecretStatus.EXPIRED,
+    )
+    ctx = ExecutionContext(
+        user_id="test_user",
+        session_id="test_session",
+        tenant_id="default",
+        tool_name="secure_shell",
+    )
+    req = ResolveRequest(
+        secret_ref="sec_live_inactive_test",
+        destination="https://example.com",
+    )
+    with pytest.raises(SecretResolutionError):
+        await resolve_secret(store, ctx, req)
+
+
+@pytest.mark.asyncio
+async def test_resolve_max_reads_boundary(store, encryption_key):
+    """max_reads=2 时，前两次成功、第三次拒绝（边界值）。"""
+    await create_test_secret(
+        store, encryption_key,
+        secret_ref="sec_live_boundary_test",
+        max_reads=2,
+    )
+    ctx = ExecutionContext(
+        user_id="test_user",
+        session_id="test_session",
+        tenant_id="default",
+        tool_name="secure_shell",
+    )
+    req = ResolveRequest(
+        secret_ref="sec_live_boundary_test",
+        destination="https://example.com",
+    )
+    assert await resolve_secret(store, ctx, req) == "super_secret_password_123"
+    assert await resolve_secret(store, ctx, req) == "super_secret_password_123"
+    with pytest.raises(SecretResolutionError):
+        await resolve_secret(store, ctx, req)

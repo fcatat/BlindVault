@@ -113,7 +113,22 @@ async def init_db(database_url: str) -> None:
         await conn.execute(CREATE_SCHEDULED_TASKS_TABLE)
         await conn.execute(CREATE_AGENT_TASKS_TABLE)
         await conn.execute(CREATE_AGENT_TASK_STEPS_TABLE)
+    await _seed_sanitizer_patterns_if_missing()
     logger.info("PostgreSQL 连接成功，所有数据表已就绪")
+
+
+async def _seed_sanitizer_patterns_if_missing() -> None:
+    """首次启动时为脱敏正则种子化 2 条基础规则。
+
+    后续无论用户怎么改（甚至清空）都不会再次写入；运行时不带任何内置 fallback。
+    """
+    import json
+    existing = await load_config("sanitizer_patterns")
+    if existing is not None:
+        return
+    from backend.sanitizer import SEED_PATTERNS
+    await save_config("sanitizer_patterns", json.dumps(SEED_PATTERNS, ensure_ascii=False))
+    logger.info("首次启动：已为 sanitizer_patterns 写入 %d 条种子规则", len(SEED_PATTERNS))
 
 
 

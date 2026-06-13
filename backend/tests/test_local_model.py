@@ -200,3 +200,69 @@ class TestExtractSecretsDegradation:
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 
+
+# ============================================================
+# 额外边界用例（防回归）
+# ============================================================
+
+class TestParseModelOutputEdge:
+    """更多 _parse_model_output 边界。"""
+
+    def test_non_list_root_returns_empty(self):
+        """模型返回的不是 JSON 数组（而是字典），按空处理。"""
+        original = "abc123"
+        # 注意：这里以方括号开头/结尾，会被截取出 JSON 片段后失败
+        results = _parse_model_output('{"value": "abc123"}', original)
+        assert results == []
+
+    def test_malformed_json_returns_empty(self):
+        """JSON 解析失败时不应抛异常。"""
+        original = "abc123"
+        results = _parse_model_output("[ this is not json ]", original)
+        assert results == []
+
+    def test_missing_fields_skipped(self):
+        """缺 type / value 字段的 item 被跳过，但其它合法 item 仍保留。"""
+        original = "密码 abc123"
+        content = (
+            '[{"value": "abc123"}, '
+            '{"value": "abc123", "type": "password", "label": "ok"}]'
+        )
+        results = _parse_model_output(content, original)
+        assert len(results) == 1
+        assert results[0].secret_type == "password"
+
+    def test_thinking_tag_wrapped_json(self):
+        """模型输出 <think> 内容后再给 JSON 数组的情况。"""
+        original = "密码 mypass123"
+        content = "<think>分析中...</think>\n[{\"value\": \"mypass123\", \"type\": \"password\", \"label\": \"x\"}]"
+        results = _parse_model_output(content, original)
+        assert len(results) == 1
+
+
+class TestExtractSecretsTimeout:
+    """显式覆盖 timeout 降级路径。"""
+
+    @pytest.mark.asyncio
+    @patch("httpx.AsyncClient.post")
+    async def test_timeout_returns_empty(self, mock_post):
+        import httpx as _httpx
+        mock_post.side_effect = _httpx.TimeoutException("simulated timeout")
+        results = await extract_secrets(
+            "密码 abc123",
+            model_url="http://fake",
+            timeout=0.1,
+        )
+        assert results == []
+
+    @pytest.mark.asyncio
+    @patch("httpx.AsyncClient.post")
+    async def test_non_200_status_returns_empty(self, mock_post):
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_post.return_value = mock_response
+        results = await extract_secrets(
+            "密码 abc123",
+            model_url="http://fake",
+        )
+        assert results == []

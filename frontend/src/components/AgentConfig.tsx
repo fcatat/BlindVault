@@ -15,16 +15,10 @@ export function AgentConfig() {
   const [error, setError] = useState('');
 
   // 连通性检测状态
-  const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'auth_error' | 'network_error' | 'mock' | 'unchecked'>('unchecked');
+  const [connectionStatus, setConnectionStatus] = useState<'checking' | 'connected' | 'auth_error' | 'network_error' | 'unchecked'>('unchecked');
   const [connectionDetail, setConnectionDetail] = useState('');
 
   const validateLlmConnection = async (currentProvider: string, currentHasKey: boolean) => {
-    if (currentProvider === 'mock') {
-      setConnectionStatus('mock');
-      setConnectionDetail('');
-      return;
-    }
-    
     if (!currentHasKey) {
       setConnectionStatus('unchecked');
       setConnectionDetail('');
@@ -55,7 +49,7 @@ export function AgentConfig() {
   const [sandboxUpgraded, setSandboxUpgraded] = useState(false);
 
   // 表单状态
-  const [provider, setProvider] = useState('mock');
+  const [provider, setProvider] = useState('openai');
   const [model, setModel] = useState('gpt-4o');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -252,7 +246,7 @@ export function AgentConfig() {
             <div className="flex items-center gap-2">
               <span className={`w-2 h-2 rounded-full ${pulseColor} animate-pulse`}></span>
               <span className="text-xs font-mono text-on-surface-variant">
-                {provider === 'mock' ? 'MOCK' : 'LLM'}
+                LLM
               </span>
             </div>
           </div>
@@ -266,21 +260,19 @@ export function AgentConfig() {
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => {
-              setProvider('mock');
-              setConnectionStatus('mock');
+              // Mock 模式已弃用：保留按钮位以避免布局抖动，但不再切换 provider
             }}
-            className={`panel rounded-xl p-5 text-left transition-all duration-200 active:scale-[0.99] ${
-              !isOpenAI ? 'ring-2 ring-primary border-primary shadow-md' : 'hover:border-outline'
-            }`}
+            disabled
+            className={`panel rounded-xl p-5 text-left transition-all duration-200 opacity-40 cursor-not-allowed`}
           >
             <div className="flex items-center gap-3 mb-3">
-              <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${!isOpenAI ? 'bg-primary text-on-primary' : 'bg-surface-container-high text-on-surface-variant'}`}>
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-surface-container-high text-on-surface-variant`}>
                 <Cpu className="w-4 h-4" />
               </div>
-              <span className={`text-sm font-semibold ${!isOpenAI ? 'text-primary' : 'text-on-surface'}`}>{t('config.mockMode')}</span>
+              <span className={`text-sm font-semibold text-on-surface line-through`}>{t('config.mockMode')}</span>
             </div>
             <p className="text-xs text-on-surface-variant leading-relaxed">
-              {t('config.mockDesc')}
+              已弃用 — 请使用 OpenAI 兼容网关。
             </p>
           </button>
           <button
@@ -599,7 +591,7 @@ export function AgentConfig() {
       </div>
 
       {/* System Prompt Read-Only Audit Panel */}
-      {provider !== 'mock' && config?.system_prompt && (
+      {config?.system_prompt && (
         <div className="mt-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300">
           <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
             <div className="flex items-center gap-3">

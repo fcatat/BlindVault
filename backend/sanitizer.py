@@ -43,9 +43,11 @@ class SensitiveMatch:
     value_end: int
 
 
-# 默认的内置敏感字段匹配规则（精简版：仅保留最核心的密码识别）
-# token / api_key 等更复杂的场景由企业版本地模型语义识别覆盖
-DEFAULT_PATTERNS = [
+# 种子正则规则：仅用于 init_db 首次启动时写入 PostgreSQL 配置表。
+# 运行时不作为内置 fallback —— 一旦用户在 UI 上清空规则，运行时即不再有任何默认匹配。
+# 后续的规则增删完全由用户在 RulesConfig 中维护。
+# token / api_key / 连接串等更复杂的语义场景，请配置企业版本地模型脱敏网关覆盖。
+SEED_PATTERNS = [
     {
         "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|(?:设置|改|设|修改|更改|改成|设成)(?:为|成)\s*|\s+)([^\s,，。；;、\n\r]+)',
         "secret_type": "password",
@@ -86,49 +88,40 @@ _initialized = False
 
 
 def _compile_default_patterns() -> list[tuple[re.Pattern, str, str]]:
-    compiled = []
-    for item in DEFAULT_PATTERNS:
-        try:
-            compiled.append((re.compile(item["pattern"], re.IGNORECASE), item["secret_type"], item["label"]))
-        except Exception as e:
-            logger.error("编译默认正则失败: %s, error=%s", item["pattern"], str(e))
-    return compiled
+    """已废弃。保留空实现以兼容旧调用路径。运行时不再有任何内置 fallback 规则。"""
+    return []
 
 
 async def get_compiled_patterns() -> list[tuple[re.Pattern, str, str]]:
-    """获取编译好的正则列表，优先从 PostgreSQL 数据库加载并与内置新增默认模式合并。"""
+    """获取编译好的正则列表。完全从 PostgreSQL 加载，DB 无规则即无规则。
+
+    种子规则在 init_db 时一次性写入；后续增删完全由用户 UI 维护。
+    """
     global _cached_patterns, _initialized
     if _initialized:
         return _cached_patterns
 
-    compiled_defaults = _compile_default_patterns()
-
     try:
         from backend.db import load_config
-        # 尝试从数据库加载
         data_str = await load_config("sanitizer_patterns")
         if data_str:
             import json
             patterns = json.loads(data_str)
             compiled = []
-            loaded_patterns_set = set()
             for item in patterns:
-                pat_str = item["pattern"]
-                compiled.append((re.compile(pat_str, re.IGNORECASE), item["secret_type"], item["label"]))
-                loaded_patterns_set.add(pat_str.lower().strip())
-            
-            # 追加数据库中没有但内置默认定义的规则
-            for def_pat, def_type, def_lbl in compiled_defaults:
-                if def_pat.pattern.lower().strip() not in loaded_patterns_set:
-                    compiled.append((def_pat, def_type, def_lbl))
-
+                try:
+                    compiled.append(
+                        (re.compile(item["pattern"], re.IGNORECASE), item["secret_type"], item["label"])
+                    )
+                except Exception as e:
+                    logger.error("跳过非法正则规则: %s, error=%s", item.get("pattern", ""), str(e))
             _cached_patterns = compiled
             _initialized = True
             return _cached_patterns
     except Exception as e:
-        logger.warning("无法从数据库加载正则规则，将使用内置默认规则: %s", str(e))
+        logger.warning("无法从数据库加载正则规则，运行时将无任何正则匹配: %s", str(e))
 
-    _cached_patterns = compiled_defaults
+    _cached_patterns = []
     _initialized = True
     return _cached_patterns
 
