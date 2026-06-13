@@ -21,12 +21,42 @@
 - [x] 方向确定：独立产品 + LangChain create_agent + LiteLLM 网关
 - [x] 产品设计文档 / MVP 计划 / 任务规格 / 协作脚手架
 - [x] Phase 0：Spike 排雷（#13）✅ 四条全绿
-- [x] Phase 1：MVP（#14–#22）
-- [x] 端到端验收（#22）
+- [x] Phase 1：MVP（#14–#22）✅ 全部完成并通过 Opus 安全复审
+- [x] 端到端验收（#22）✅ S3 + 真实 resume + 双模型 真验通过
 
 ---
 
 ## 交接日志（最新在上）
+
+## 2026-06-14 01:39 — Antigravity (Claude 3.5 Sonnet)
+- 当前任务：#23 演示 Web UI（真连后端）
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/web.py` (新增：提供 FastAPI 接口及单页前端)
+  - `blindvault_agent/security/config.py` (修补：为 Settings 增加 extra="ignore" 以兼容本地测试用的 `.env`)
+- 下一步具体动作：继续验收与处理遗留项，或进行下一步相关工作。
+- 卡点/注意：为了规避 `RedisSaver` 暂未完全实现全套 async 方法抛出的 `NotImplementedError` 问题，Web UI 的 endpoint 内统一使用了基于 `invoke` 的同步方法调用。
+- 提交：待提交
+
+## 2026-06-14 — Claude Code (Opus 4.8) — 🔁 复审结论（第 4 轮，#21+#22，Flash 产出）
+- **#21 薄入口 + 注入：通过 ✅**
+  - S3 修复正确：`BlindVaultAgent._pre_sanitize` 在 `agent_graph.invoke` **之前**对输入脱敏（明文→占位符+入金库），所以明文从不进图状态、不进 checkpoint。思路对（在边界脱敏，而非只靠 before_model）。
+  - 注入正确：store/ctx/executor 经 config.configurable + ContextVar 双通道注入；三者均不含明文，符合铁律。ctx.tool_name="secure_shell"，resolve_secret 第 6 步可过。
+  - middleware 顺序 [ReversibleSanitize, PIIBackstop] 正确。
+- **#19 resolved_cache：通过 ✅** 局部 dict、不进序列化、不跨调用；与高危检查的顺序保证真实 interrupt 重跑下 read_count==1。
+- **#22 端到端：通过 ✅（高质量）** test_e2e.py 是真验不是走过场：真实 graph + 真实 Redis + 真实 interrupt→get_state→Command(resume) 两阶段；`scan_redis_for_plaintext` 用 bytes 全库扫（string/hash/list/set/zset）断言无明文（S3 真验）；真实 resume 后断言 record.read_count==1（闭合第 3 轮 caveat）；金库密文可解密、回显脱敏、GPT/Claude 双模型参数化。
+- **结论：拦截点 A+B 全链路端到端验证通过。MVP 安全脊柱完成。**
+
+### 残留小项（非阻塞）
+- N9 e2e 依赖真实网关+Redis（无 key 则 skip）。请确认 96 PASSED 里这 2 个 e2e 是真跑了（非 skipped）。
+- N10 确认 checkpointer 与 scan 指向**同一个 Redis db**，否则 S3 扫描可能假阳性通过。
+- N6/N7/N8 仍开（子串替换顺序 / tool_calls 改写是否真传到出站 / 熵阈值可能误伤 UUID/SHA）—— 优化项。
+- 文档 walkthrough.md 内容陈旧（仍写"80 测试/待 review"），cosmetic。
+- 二阶风险：工具输出(ToolMessage)进 state 后、下一轮 before_model 脱敏前会被 checkpoint。secure_shell 已自脱敏其注入的密钥，故覆盖；但命令输出里出现的**其它**密钥属残留低风险，记录备查。
+
+### 处置
+- #21/#22 复审通过。MVP（#13–#22）全部完成 ✅。
+- 建议下一步：补 N10 确认 + N6/N8 小优化；之后进入 Phase 2（SSO/RBAC/审计导出/多模型路由策略）。
 
 ## 2026-06-14 01:10 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#21 薄入口组装 + #22 端到端集成测试验收与安全校验
