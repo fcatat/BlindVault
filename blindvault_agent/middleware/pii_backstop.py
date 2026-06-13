@@ -89,7 +89,9 @@ _BACKSTOP_RULES: list[tuple[re.Pattern, str]] = [
 ]
 
 # 白名单：已经被主层处理的占位符
-_PLACEHOLDER_PATTERN = re.compile(r'\{\{secret:sec_\w+\}\}')
+_PLACEHOLDER_PATTERN = re.compile(r'\{\{secret:sec_[A-Za-z0-9_\-]+\}\}')
+_CONNSTR_PLACEHOLDER_PATTERN = re.compile(r':\{\{secret:sec_[A-Za-z0-9_\-]+\}\}@')
+_RAW_SECRET_REF_PATTERN = re.compile(r'\bsec_(?:live|test)_[A-Za-z0-9_\-]+\b')
 
 # 安全的常见词，不应触发兜底
 _SAFE_PATTERNS = frozenset({
@@ -99,7 +101,12 @@ _SAFE_PATTERNS = frozenset({
 
 def _strip_placeholders(text: str) -> str:
     """去除已被主层处理的占位符，避免误报。"""
-    return _PLACEHOLDER_PATTERN.sub("", text)
+    # 1. 优先将带有占位符的连接串密码部分消除，转为不含密码的连接串（如 postgresql://user@host）
+    text = _CONNSTR_PLACEHOLDER_PATTERN.sub("@", text)
+    # 2. 消除其它孤立的占位符
+    text = _PLACEHOLDER_PATTERN.sub("", text)
+    # 3. 消除裸的 secret_ref 引用
+    return _RAW_SECRET_REF_PATTERN.sub("", text)
 
 
 # ============================================================

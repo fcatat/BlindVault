@@ -28,7 +28,7 @@ from blindvault_agent.security.models import (
     ExecutionContext, ResolveRequest, SecretRecord, SecretStatus, SecretType,
 )
 from blindvault_agent.security.redis_store import SecretStore
-from blindvault_agent.tools.secure_shell import secure_shell, _is_dangerous, _redact_output
+from blindvault_agent.tools.secure_shell import _secure_shell_async as secure_shell, _is_dangerous, _redact_output
 from blindvault_agent.tests.conftest import TEST_KEY_RAW
 
 

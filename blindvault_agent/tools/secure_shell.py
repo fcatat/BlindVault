@@ -18,11 +18,16 @@ import logging
 import re
 import shlex
 
+from typing import Annotated, Any
+from langchain_core.tools import InjectedToolArg
+from langchain_core.runnables import RunnableConfig
+
 from blindvault_agent.security.models import ExecutionContext, ResolveRequest
 from blindvault_agent.security.policy import SecretResolutionError, resolve_secret
 from blindvault_agent.security.redis_store import SecretStore
 
 logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # 工具 Schema
@@ -88,12 +93,14 @@ def _redact_output(output: str, real_secret: str) -> str:
 # ============================================================
 
 
-async def secure_shell(
+async def _secure_shell_async(
     command: str,
     secret_ref: str | None = None,
     *,
-    store: SecretStore,
-    ctx: ExecutionContext,
+    store: Annotated[SecretStore, InjectedToolArg] = None,
+    ctx: Annotated[ExecutionContext, InjectedToolArg] = None,
+    executor: Annotated[Any, InjectedToolArg] = None,
+    config: RunnableConfig = None,
     **kwargs,
 ) -> dict:
     """
@@ -108,6 +115,18 @@ async def secure_shell(
     Returns:
         {"status": "success"|"error", "stdout": ..., "stderr": ..., "exit_code": ...}
     """
+    # 从 config 中注入运行时参数，防止不可序列化对象写入 state
+    if config and "configurable" in config:
+        store = store or config["configurable"].get("store")
+        ctx = ctx or config["configurable"].get("ctx")
+        executor = executor or config["configurable"].get("executor")
+
+    # 优先从 ContextVar 获取运行时依赖，以防 LangGraph 在重跑节点时丢失 config
+    from blindvault_agent.agent import current_store, current_ctx, current_executor
+    store = store or current_store.get()
+    ctx = ctx or current_ctx.get()
+    executor = executor or current_executor.get()
+
     # ---- B2 接线：高危命令审批（resolve 之前，command 仅含占位符）----
     from blindvault_agent.middleware.hitl import (
         check_and_interrupt_if_high_risk,
@@ -126,6 +145,7 @@ async def secure_shell(
 
     real_secrets_list = []
     final_command = command
+    resolved_cache = {}  # 缓存已解析的密钥，防止同一个 ref 重复解析（保证 read_count 正好为 1）
 
     # 0. 验证并解析主 secret_ref (替换 $SECRET 占位符)
     if secret_ref:
@@ -139,15 +159,20 @@ async def secure_shell(
             }
 
         try:
-            real_secret = await resolve_secret(
-                store=store,
-                ctx=ctx,
-                request=ResolveRequest(
-                    secret_ref=secret_ref,
-                    requested_use="shell_command",
-                    destination="",  # secure_shell 不做目标校验
-                ),
-            )
+            if secret_ref in resolved_cache:
+                real_secret = resolved_cache[secret_ref]
+            else:
+                real_secret = await resolve_secret(
+                    store=store,
+                    ctx=ctx,
+                    request=ResolveRequest(
+                        secret_ref=secret_ref,
+                        requested_use="shell_command",
+                        destination="",  # secure_shell 不做目标校验
+                    ),
+                )
+                resolved_cache[secret_ref] = real_secret
+
             real_secrets_list.append(real_secret)
             final_command = command.replace("$SECRET", real_secret)
         except SecretResolutionError as e:
@@ -165,19 +190,24 @@ async def secure_shell(
     for match in pattern_curly.finditer(command):
         ref = match.group(1)
         try:
-            val = await resolve_secret(
-                store=store,
-                ctx=ctx,
-                request=ResolveRequest(
-                    secret_ref=ref,
-                    requested_use="shell_command_multi",
-                    destination="",
+            if ref in resolved_cache:
+                val = resolved_cache[ref]
+            else:
+                val = await resolve_secret(
+                    store=store,
+                    ctx=ctx,
+                    request=ResolveRequest(
+                        secret_ref=ref,
+                        requested_use="shell_command_multi",
+                        destination="",
+                    )
                 )
-            )
+                resolved_cache[ref] = val
+
             real_secrets_list.append(val)
             final_command = final_command.replace(match.group(0), val)
         except Exception as e:
-            logger.warning("解析多凭证占位符失败: ref=%s, error=%s", ref, str(e))
+            logger.exception("解析多凭证占位符异常: ref=%s", ref)
 
     # 模式二：支持命令行中直接出现的 sec_live_xxx 引用
     pattern_raw = re.compile(r"\b(sec_(?:live|test)_[A-Za-z0-9_-]+)\b")
@@ -186,19 +216,24 @@ async def secure_shell(
         if ref == secret_ref or f"{{secret:{ref}}}" in command:
             continue
         try:
-            val = await resolve_secret(
-                store=store,
-                ctx=ctx,
-                request=ResolveRequest(
-                    secret_ref=ref,
-                    requested_use="shell_command_multi",
-                    destination="",
+            if ref in resolved_cache:
+                val = resolved_cache[ref]
+            else:
+                val = await resolve_secret(
+                    store=store,
+                    ctx=ctx,
+                    request=ResolveRequest(
+                        secret_ref=ref,
+                        requested_use="shell_command_multi",
+                        destination="",
+                    )
                 )
-            )
+                resolved_cache[ref] = val
+
             real_secrets_list.append(val)
             final_command = final_command.replace(ref, val)
         except Exception as e:
-            logger.warning("解析多凭证直连引用失败: ref=%s, error=%s", ref, str(e))
+            logger.exception("解析多凭证直连引用异常: ref=%s", ref)
 
     # 1. 检查危险命令 (不管是命令替换前还是替换后，均进行敏感拦截)
     danger = _is_dangerous(final_command)
@@ -214,7 +249,7 @@ async def secure_shell(
 
 
     # 4. 执行命令（必须通过注入的沙箱执行器）
-    executor = kwargs.get("executor")
+    executor = executor or kwargs.get("executor")
 
     # 🔴 B1 fail-closed：未注入 executor 则拒绝执行
     # 生产环境必须注入沙箱 executor，不允许在宿主直接跑命令
@@ -270,5 +305,104 @@ async def secure_shell(
             for secret in real_secrets_list:
                 del secret
             del real_secrets_list
+        if 'resolved_cache' in locals() and resolved_cache:
+            for k, v in list(resolved_cache.items()):
+                del v
+                del resolved_cache[k]
+            del resolved_cache
         if 'final_command' in locals():
             del final_command
+
+
+def _secure_shell_sync(
+    command: str,
+    secret_ref: str | None = None,
+    *,
+    store: Annotated[SecretStore, InjectedToolArg] = None,
+    ctx: Annotated[ExecutionContext, InjectedToolArg] = None,
+    executor: Annotated[Any, InjectedToolArg] = None,
+    config: RunnableConfig = None,
+    **kwargs,
+) -> dict:
+    import asyncio
+    import concurrent.futures
+
+    # 从 config 中注入运行时参数，防止不可序列化对象写入 state
+    if config and "configurable" in config:
+        store = store or config["configurable"].get("store")
+        ctx = ctx or config["configurable"].get("ctx")
+        executor = executor or config["configurable"].get("executor")
+
+    # 优先从 ContextVar 获取运行时依赖，以防 LangGraph 在重跑节点时丢失 config
+    from blindvault_agent.agent import current_store, current_ctx, current_executor
+    store = store or current_store.get()
+    ctx = ctx or current_ctx.get()
+    executor = executor or current_executor.get()
+
+    is_fake = store is None or "Fake" in type(store._redis).__name__
+
+    def _run_in_new_loop():
+        # 异步的 coro 必须在它的执行事件循环里使用与该事件循环绑定的 Redis 客户端
+        # 如果是 FakeRedis，直接复用已有的 FakeRedis
+        if is_fake:
+            return asyncio.run(_secure_shell_async(
+                command=command,
+                secret_ref=secret_ref,
+                store=store,
+                ctx=ctx,
+                executor=executor,
+                config=config,
+                **kwargs
+            ))
+
+        # 如果是真实的 Redis，我们新建临时的 Redis 客户端连接，实现生命周期完全自包含
+        from redis.asyncio import Redis as AsyncRedis
+        from blindvault_agent.security.redis_store import SecretStore as TempSecretStore
+
+        conn_pool = store._redis.connection_pool
+        host = conn_pool.connection_kwargs.get("host", "localhost")
+        port = conn_pool.connection_kwargs.get("port", 6379)
+        db = conn_pool.connection_kwargs.get("db", 0)
+        redis_url = f"redis://{host}:{port}/{db}"
+
+        async def _async_task():
+            temp_client = AsyncRedis.from_url(redis_url, decode_responses=True)
+            temp_store = TempSecretStore(temp_client, key_prefix=store._prefix)
+            try:
+                return await _secure_shell_async(
+                    command=command,
+                    secret_ref=secret_ref,
+                    store=temp_store,
+                    ctx=ctx,
+                    executor=executor,
+                    config=config,
+                    **kwargs
+                )
+            finally:
+                await temp_client.aclose()
+
+        return asyncio.run(_async_task())
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # 在已有事件循环中，提交到后台线程执行以防死锁
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_run_in_new_loop)
+            return future.result(timeout=120)
+    else:
+        return _run_in_new_loop()
+
+
+from langchain_core.tools import StructuredTool
+
+# 暴露具备同步/异步双重调用支持的 StructuredTool 实例，完美兼容
+secure_shell = StructuredTool.from_function(
+    func=_secure_shell_sync,
+    coroutine=_secure_shell_async,
+    name="secure_shell",
+    description="通用安全 Shell 执行器。输入要执行的命令，密码以 $SECRET 或占位符表示。",
+)
