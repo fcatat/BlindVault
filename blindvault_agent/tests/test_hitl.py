@@ -6,8 +6,8 @@
 验证：
 1. 高危命令能被识别
 2. 安全命令不触发
-3. HumanInTheLoopMiddleware 配置正确创建
-4. 审批状态不含明文密钥（命令中只有占位符）
+3. 审批状态不含明文密钥（命令中只有占位符）
+4. HighRiskCommandRejected 异常不暴露完整命令
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pytest
 
 from blindvault_agent.middleware.hitl import (
     is_command_high_risk,
-    create_hitl_middleware,
+    HighRiskCommandRejected,
 )
 
 
@@ -26,7 +26,7 @@ from blindvault_agent.middleware.hitl import (
 
 
 def test_high_risk_rm_rf():
-    assert is_command_high_risk("rm -rf /var/log") is not None
+    assert is_command_high_risk("rm -rf /") is not None
 
 
 def test_high_risk_mkfs():
@@ -86,33 +86,34 @@ def test_safe_systemctl_status():
 
 
 # ============================================================
-# 测试：create_hitl_middleware
+# 测试：审批安全
 # ============================================================
-
-
-def test_hitl_middleware_creation():
-    """HITL middleware 应能正常创建。"""
-    mw = create_hitl_middleware()
-    assert mw is not None
-
-
-def test_hitl_middleware_config():
-    """HITL middleware 应拦截 secure_shell。"""
-    mw = create_hitl_middleware()
-    # HumanInTheLoopMiddleware 的 interrupt_on 应包含 secure_shell
-    assert hasattr(mw, '_interrupt_on') or hasattr(mw, 'interrupt_on')
 
 
 def test_command_with_placeholder_not_leaking():
     """
     审批时命令中只有占位符，不含明文——
-    这是安全铁律的验证：审批状态序列化不含密钥。
+    安全铁律验证：审批状态序列化不含密钥。
     """
     command = "psql postgresql://user:{{secret:sec_live_abc123}}@host/db -c 'SELECT 1'"
-    # 高危检查用的是脱敏后的命令
     risk = is_command_high_risk(command)
-    # 这个命令本身不高危（psql 不在高危列表中）
-    assert risk is None
-    # 但关键是：命令中不含真实密码
-    assert "password" not in command.lower()
+    assert risk is None  # psql 本身不高危
     assert "{{secret:" in command
+
+
+def test_high_risk_rejected_error_is_generic():
+    """HighRiskCommandRejected 错误信息不应暴露完整命令。"""
+    err = HighRiskCommandRejected(
+        "rm -rf / --no-preserve-root",
+        "rm -rf /（删除根目录）",
+    )
+    msg = str(err)
+    assert "rm -rf / --no-preserve-root" not in msg
+    assert "删除根目录" in msg
+
+
+def test_high_risk_returns_description():
+    """高危检测应返回人可读的风险描述。"""
+    desc = is_command_high_risk("DROP DATABASE production")
+    assert desc is not None
+    assert "数据库" in desc

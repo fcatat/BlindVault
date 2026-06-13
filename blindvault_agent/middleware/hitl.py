@@ -1,12 +1,16 @@
 """
-BlindVault HITL 审批 Middleware 配置（拦截点 B 审批）
+BlindVault HITL 审批（拦截点 B 审批）
 
 🔴 安全关键代码 —— 必须人工/强模型 review
 
-功能：
-- 对 secure_shell 工具调用启用 HumanInTheLoopMiddleware
-- 高危命令暂停 → 存 Redis checkpoint → 人工 approve/reject → 恢复/拒绝
-- 审批状态序列化时不含明文密钥（命令中只有占位符，明文在 resolve 瞬间才注入）
+设计：
+- 高危命令判定在 secure_shell 工具内部完成
+- 只有高危命令才触发 LangGraph interrupt() 暂停审批
+- 非高危命令直接执行，不审批
+- 审批状态序列化时不含明文密钥（命令中只有占位符）
+
+B2 修复：移除对所有 secure_shell 的无差别拦截，
+改为在工具内部按高危规则有条件触发 interrupt()。
 
 安全铁律：
 - 审批时模型和人工看到的都是脱敏后的命令（含占位符 {{secret:xxx}}）
@@ -20,13 +24,11 @@ import logging
 import re
 from typing import Optional
 
-from langchain.agents.middleware import HumanInTheLoopMiddleware
-
 logger = logging.getLogger(__name__)
 
 
 # ============================================================
-# 高危命令规则（移植自 backend/tools/secure_shell.py）
+# 高危命令规则
 # ============================================================
 
 # 高危命令正则模式
@@ -64,40 +66,60 @@ def is_command_high_risk(command: str) -> Optional[str]:
     return None
 
 
-# ============================================================
-# HITL Middleware 工厂
-# ============================================================
-
-
-def create_hitl_middleware() -> HumanInTheLoopMiddleware:
+def check_and_interrupt_if_high_risk(command: str) -> None:
     """
-    创建 HITL 审批 middleware。
+    检查命令是否高危，如果是则触发 LangGraph interrupt() 暂停审批。
 
-    拦截 secure_shell 工具调用，要求人工审批。
+    此函数应在 secure_shell 工具内部、凭证 resolve 之前调用，
+    确保审批状态中只有占位符，不含明文。
 
-    使用方式：
-        agent = create_agent(
-            model=llm,
-            tools=[...],
-            checkpointer=redis_checkpointer,  # 必须！
-            middleware=[
-                sanitize_mw,       # 拦截点 A 主层
-                pii_backstop_mw,   # 拦截点 A 兜底
-                create_hitl_middleware(),  # 拦截点 B 审批
-            ],
-        )
+    非高危命令不触发中断，直接返回。
 
-    审批恢复：
+    恢复方式：
         from langgraph.types import Command
         agent.invoke(
             Command(resume={"decisions": [{"type": "approve"}]}),
             config={"configurable": {"thread_id": thread_id}},
         )
+
+    Raises:
+        langgraph.types.interrupt: 高危命令触发中断
     """
-    return HumanInTheLoopMiddleware(
-        interrupt_on={
-            "secure_shell": {
-                "allowed_decisions": ["approve", "reject"],
-            },
-        },
-    )
+    risk = is_command_high_risk(command)
+    if risk is None:
+        return  # 非高危，放行
+
+    logger.warning("🚨 高危命令审批: %s — %s", command[:80], risk)
+
+    # 触发 LangGraph interrupt
+    from langgraph.types import interrupt
+
+    decision = interrupt({
+        "type": "high_risk_command",
+        "command": command,  # 此时命令中只有占位符，不含明文
+        "risk_description": risk,
+        "message": f"检测到高危命令（{risk}），需要人工确认。approve 执行，reject 取消。",
+    })
+
+    # interrupt() 返回 resume 值
+    if isinstance(decision, dict):
+        decisions = decision.get("decisions", [])
+        if decisions and decisions[0].get("type") == "approve":
+            logger.info("✅ 高危命令已获批准: %s", command[:80])
+            return
+        else:
+            logger.warning("❌ 高危命令被拒绝: %s", command[:80])
+            raise HighRiskCommandRejected(command, risk)
+    else:
+        # 未知 resume 格式，安全起见拒绝
+        logger.warning("❌ 高危命令审批格式异常，拒绝执行")
+        raise HighRiskCommandRejected(command, risk)
+
+
+class HighRiskCommandRejected(Exception):
+    """高危命令被人工拒绝执行。"""
+
+    def __init__(self, command: str, risk: str):
+        self.risk = risk
+        # 不在错误信息中暴露完整命令
+        super().__init__(f"高危命令被拒绝执行（风险：{risk}）")

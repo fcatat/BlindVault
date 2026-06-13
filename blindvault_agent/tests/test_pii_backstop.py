@@ -27,8 +27,9 @@ from blindvault_agent.middleware.pii_backstop import (
 # ============================================================
 
 class FakeMessage:
-    def __init__(self, content: str):
-        self.content = content
+    def __init__(self, content=None, tool_calls=None):
+        self.content = content if content is not None else ""
+        self.tool_calls = tool_calls
 
 
 # ============================================================
@@ -198,3 +199,71 @@ def test_error_message_is_generic():
     error_msg = str(exc_info.value)
     assert "SuperSecretValue123" not in error_msg
     assert "blocked" in error_msg.lower() or "backstop" in error_msg.lower()
+
+
+# ============================================================
+# S1 测试：list-form content + tool_calls args
+# ============================================================
+
+
+def test_middleware_blocks_list_content():
+    """S1: list-form content 中的凭证应被检测。"""
+    mw = PIIBackstopMiddleware()
+    state = {
+        "messages": [
+            FakeMessage(content=[
+                {"type": "text", "text": "连接 postgresql://root:leaked@db:5432"},
+            ]),
+        ],
+    }
+    with pytest.raises(PIIBlockError):
+        mw.before_model(state)
+
+
+def test_middleware_blocks_tool_call_args():
+    """S1: tool_calls args 中的凭证应被检测。"""
+    mw = PIIBackstopMiddleware()
+    msg = FakeMessage(
+        content="执行命令",
+        tool_calls=[
+            {
+                "name": "secure_shell",
+                "args": {"command": "psql", "password": "password=LeakedInArgs!"},
+                "id": "tc_1",
+            }
+        ],
+    )
+    state = {"messages": [msg]}
+    with pytest.raises(PIIBlockError):
+        mw.before_model(state)
+
+
+# ============================================================
+# S2 测试：香农熵通用密钥检测
+# ============================================================
+
+
+def test_detect_generic_high_entropy():
+    """S2: 无已知前缀但高熵的长字符串应被检测。"""
+    # 一个随机生成的 base64-like token（无 sk/ghp 等前缀）
+    result = detect_pii_leaks("token: aB3dE7fG9hJ2kL5mN8pQ1rS4tU6vW0xY")
+    assert result is not None
+
+
+def test_no_detect_normal_long_word():
+    """S2: 纯英文长单词不应触发熵检测。"""
+    result = detect_pii_leaks("supercalifragilisticexpialidocious")
+    assert result is None
+
+
+def test_no_detect_hex_hash():
+    """S2: 纯 hex hash（如 SHA-256）不应触发。"""
+    result = detect_pii_leaks("commit a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0")
+    assert result is None
+
+
+def test_detect_mixed_case_numbers():
+    """S2: 混合大小写 + 数字的长 token 应被检测。"""
+    result = detect_pii_leaks("使用 Xk9mPq2rSw4tUv7yAz1cEf3gHi5jLn8o 连接")
+    assert result is not None
+

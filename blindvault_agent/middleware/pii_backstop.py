@@ -102,6 +102,64 @@ def _strip_placeholders(text: str) -> str:
     return _PLACEHOLDER_PATTERN.sub("", text)
 
 
+# ============================================================
+# S2 修复：香农熵检测（覆盖无已知前缀的通用密钥）
+# ============================================================
+
+import math
+from collections import Counter
+
+# 提取 20+ 字符的连续令牌（字母数字+常见符号）
+_PATTERN_LONG_TOKEN = re.compile(r'[A-Za-z0-9_\-\.+/=]{20,}')
+
+# 熵阈值：4.0 bits/char（自然英文约 1.5-3.5，随机密钥约 4.5-6.0）
+_ENTROPY_THRESHOLD = 4.0
+
+# 常见非密钥的长字符串白名单模式
+_ENTROPY_WHITELIST = re.compile(
+    r'^(?:'
+    r'sec_(?:live|test)_'      # 我们自己的 secret_ref
+    r'|https?://'               # URL
+    r'|[a-f0-9]{32,}$'         # 纯 hex hash（md5/sha 等，通常不是密钥）
+    r'|[A-Za-z]+(?:_[A-Za-z]+){4,}'  # snake_case 变量名（如 my_very_long_variable_name）
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _shannon_entropy(s: str) -> float:
+    """计算字符串的香农信息熵（bits per character）。"""
+    if not s:
+        return 0.0
+    freq = Counter(s)
+    length = len(s)
+    return -sum(
+        (count / length) * math.log2(count / length)
+        for count in freq.values()
+    )
+
+
+def _detect_high_entropy_strings(text: str) -> bool:
+    """
+    检测文本中是否存在高熵字符串（可能是无前缀的密钥/token）。
+
+    返回 True 如果检测到，False 如果安全。
+    """
+    for match in _PATTERN_LONG_TOKEN.finditer(text):
+        token = match.group(0)
+        # 跳过白名单
+        if _ENTROPY_WHITELIST.match(token):
+            continue
+        # 跳过纯数字、纯字母
+        if token.isdigit() or token.isalpha():
+            continue
+        # 计算熵
+        entropy = _shannon_entropy(token)
+        if entropy >= _ENTROPY_THRESHOLD:
+            return True
+    return False
+
+
 def detect_pii_leaks(text: str) -> Optional[str]:
     """
     检测文本中可能泄露的 PII/凭证。
@@ -112,6 +170,7 @@ def detect_pii_leaks(text: str) -> Optional[str]:
     # 先去除已处理的占位符
     cleaned = _strip_placeholders(text)
 
+    # 第一层：基于规则的检测
     for pattern, rule_name in _BACKSTOP_RULES:
         match = pattern.search(cleaned)
         if match:
@@ -131,6 +190,11 @@ def detect_pii_leaks(text: str) -> Optional[str]:
                     if val.lower() in skip_words or len(val) < 3:
                         continue
             return rule_name
+
+    # 第二层 S2：基于香农熵的通用检测
+    if _detect_high_entropy_strings(cleaned):
+        return "high_entropy_generic"
+
     return None
 
 
@@ -157,28 +221,30 @@ class PIIBackstopMiddleware(AgentMiddleware):
     def before_model(self, state: AgentState, runtime=None):
         """
         扫描即将发往模型的消息，检测未被处理的凭证。
+
+        S1 修复：覆盖 str/list content + tool_calls args。
         检测到则阻断。
         """
         if not self._enabled:
             return None
 
+        from blindvault_agent.middleware.msg_utils import extract_scannable_texts
+
         messages = state.get("messages", [])
 
         for msg in messages:
-            content = msg.content if hasattr(msg, 'content') and isinstance(msg.content, str) else ""
-            if not content:
-                continue
-
-            leak = detect_pii_leaks(content)
-            if leak:
-                self._block_count += 1
-                logger.critical(
-                    "🚨 PII 兜底层阻断! 规则=%s, 消息类型=%s (共计阻断 %d 次)",
-                    leak,
-                    type(msg).__name__,
-                    self._block_count,
-                )
-                raise PIIBlockError(leak)
+            texts = extract_scannable_texts(msg)
+            for text in texts:
+                leak = detect_pii_leaks(text)
+                if leak:
+                    self._block_count += 1
+                    logger.critical(
+                        "🚨 PII 兜底层阻断! 规则=%s, 消息类型=%s (共计阻断 %d 次)",
+                        leak,
+                        type(msg).__name__,
+                        self._block_count,
+                    )
+                    raise PIIBlockError(leak)
 
         return None
 

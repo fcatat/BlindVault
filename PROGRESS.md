@@ -28,6 +28,56 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-14 00:17 — Antigravity (Claude Opus 4.6 Thinking) — B1/B2/S1/S2 修复
+- 范围：修复安全 review 中 2 个 🔴 Blocker + 2 个 🟠 Should-fix
+- 修复明细：
+  - **B1 [#19] fail-closed**：删除本地 subprocess 回退，无 executor 直接拒绝执行。测试 `test_fail_closed_no_executor` 验证。
+  - **B2 [#20] HITL 接线**：移除 HumanInTheLoopMiddleware 的无差别拦截，改为 `check_and_interrupt_if_high_risk()` 在工具内部按高危规则有条件触发 LangGraph `interrupt()`。非高危命令不审批。
+  - **S1 [#17+#18] 扫描覆盖**：新增 `msg_utils.py`，`extract_scannable_texts()` 覆盖 str/list content + tool_calls args；`rebuild_content()`/`rebuild_tool_calls()` 在所有位置执行替换。两层 middleware 均已接入。测试 `test_middleware_list_content`、`test_middleware_tool_calls_args`、`test_middleware_blocks_list_content`、`test_middleware_blocks_tool_call_args` 验证。
+  - **S2 [#18] 香农熵**：新增 `_shannon_entropy()` + `_detect_high_entropy_strings()`，对 20+ 字符 token 计算信息熵（阈值 4.0 bits/char），覆盖无已知前缀的通用密钥。白名单排除 secret_ref/URL/hex hash/snake_case 变量名。测试 `test_detect_generic_high_entropy`、`test_no_detect_normal_long_word`、`test_no_detect_hex_hash`、`test_detect_mixed_case_numbers` 验证。
+- 动过的文件：
+  - 改 blindvault_agent/tools/secure_shell.py（B1 fail-closed）
+  - 改 blindvault_agent/middleware/hitl.py（B2 重构）
+  - 改 blindvault_agent/middleware/reversible_sanitize.py（S1 扫描扩展）
+  - 改 blindvault_agent/middleware/pii_backstop.py（S1 + S2 香农熵）
+  - 新增 blindvault_agent/middleware/msg_utils.py（S1 文本提取工具）
+  - 改 blindvault_agent/tests/ 全部 4 个测试文件（新增 9 个测试）
+- 验收结果：**89 个测试全绿**（policy 15 + 脱敏 20 + PII 20 + shell 14 + HITL 18 + 余 2 = 89）
+- S3 按指示留到 #21
+- 状态：🔴 **待复审**
+
+## 2026-06-14 — Claude Code (Opus 4.8) — 🔴 安全 REVIEW 结论
+- 范围：#15 迁移 + #17 可逆脱敏 + #18 PII 兜底 + #19 secure_shell + #20 HITL
+- **#15 迁移：通过 ✅** crypto/policy/redis_store/models 与 backend/ 逻辑字节级一致（仅 import 路径），9 步校验链完整。可提交。
+- **结论：#17/#18 方向对但要补盲区；#19/#20 各有 1 个 blocker。修掉下列 🔴/🟠 再提交。**
+
+### 🔴 Blocker（必须改）
+- **B1 [#19] secure_shell 默认本地 shell 执行 = 沙箱逃逸风险。** 未注入 `executor` 时回退到 `create_subprocess_shell` 在宿主直接跑（带明文密码 + 危险命令仅弱黑名单）。改为 **fail-closed**：无 executor 直接拒绝执行，不许默默本地跑。生产必须注入沙箱 executor。
+- **B2 [#20] HITL 高危判定未接线。** `is_command_high_risk`（13 条规则）是死代码；`create_hitl_middleware` 对**所有** secure_shell 调用都拦审批。要么把高危过滤接上（按设计：高危才拦），要么明确产品决定"全部命令都审批"并删掉死代码。
+
+### 🟠 Should-fix（泄露面，强烈建议）
+- **S1 [#17+#18] 只扫 `msg.content` 且仅当 str。** list/多模态 content、以及 AIMessage 的 `tool_calls` 参数里的密钥**两层都漏**。至少处理 list-form content blocks，并考虑扫 tool_call args。
+- **S2 [#18] 兜底层"高熵"实为前缀匹配。** `_PATTERN_HIGH_ENTROPY` 只认已知前缀(sk/ghp/AKIA/eyJ…)；无前缀的通用密钥 + 无 `password=` 上下文 → 两层都漏。这是残余泄露核心，建议补真正的香农熵检测。
+- **S3 [整合] checkpoint 时序泄露。** 用户原始明文进 state 后、before_model 脱敏前，是否已被 RedisSaver 持久化？若是则违反"密钥不进序列化状态"。需在 #21 入口层先脱敏再进图，或验证 checkpoint 时序。#22 验收项 3 必须真验。
+
+### 🟡 Nice-to-have
+- N1 [#17] before_model 返回全量 messages 依赖每条有稳定 id（add_messages 按 id 替换），否则多轮可能重复 —— 加多轮测试确认。
+- N2 [#17] `make_sync_save_record` 每存一个 secret 新建一个 ThreadPoolExecutor，低效，建议复用。
+- N3 [#19] `del secret` 是安全表演（不真清零内存）；`shlex` 未使用。
+- N4 [#17] sanitize 默认 `max_reads=999999` + ttl 900s，建议收紧。
+- N5 [agent.py] checkpointer `__enter__` 无对应 `__exit__`。
+
+### 整合层提醒（#21 薄入口必须处理）
+- middleware 顺序必须 `[ReversibleSanitize, PIIBackstop, HITL]`（before_model 按列表序跑，sanitize 必须在兜底前）。
+- secure_shell 的 store/ctx/executor 注入：**ctx.tool_name 必须 ="secure_shell"** 否则 resolve_secret 第 6 步 allowed_tools 校验过不了；executor 必须是沙箱（见 B1）。用 LangChain InjectedState/InjectedToolArg 注入。
+- agent.py 目前仍是 echo 占位 + 空 middleware，真正组装在 #21 —— 上面 S1/S3/顺序 在组装时一并验。
+
+### 处置建议
+- #15：可直接提交。
+- #17/#18：补 S1、S2 后提交。
+- #19：改 B1 后提交。#20：改 B2 后提交。
+- S3 + 整合项留到 #21，#22 端到端务必抽查 Redis checkpoint 无明文。
+
 ## 2026-06-13 23:58 — Antigravity (Claude Opus 4.6 Thinking)
 - 当前任务：#20 HITL 审批 + Redis checkpointer 🔴 **待 review**
 - 完成度：代码完成，待人工/强模型 review

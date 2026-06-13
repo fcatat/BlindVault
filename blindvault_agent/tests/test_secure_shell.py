@@ -260,3 +260,23 @@ async def test_invalid_secret_ref(store, ctx):
 
     assert result["status"] == "error"
     assert "Invalid" in result["reason"]
+
+
+# ============================================================
+# B1 测试：fail-closed（无 executor）
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_fail_closed_no_executor(store, ctx):
+    """B1: 未注入 executor 时应拒绝执行（fail-closed）。"""
+    result = await secure_shell(
+        command="df -h",
+        store=store,
+        ctx=ctx,
+        # 注意：没有传 executor
+    )
+
+    assert result["status"] == "error"
+    assert "executor" in result["reason"].lower() or "沙箱" in result["reason"]
+

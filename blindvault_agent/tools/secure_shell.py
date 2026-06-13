@@ -197,42 +197,27 @@ async def secure_shell(
         }
 
 
-    # 4. 执行命令（通过注入的执行器或本地 subprocess）
+    # 4. 执行命令（必须通过注入的沙箱执行器）
     executor = kwargs.get("executor")
-    
+
+    # 🔴 B1 fail-closed：未注入 executor 则拒绝执行
+    # 生产环境必须注入沙箱 executor，不允许在宿主直接跑命令
+    if not executor:
+        logger.error("secure_shell: 未注入 executor，拒绝执行（fail-closed）")
+        return {
+            "status": "error",
+            "reason": "未配置安全执行器（sandbox executor），拒绝执行命令。"
+                      "请在 agent 初始化时注入沙箱 executor。",
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+        }
+
     try:
-        if executor:
-            # 使用注入的执行器（沙箱/远程）
-            res_data = await executor(final_command)
-            stdout = res_data.get("stdout", "")
-            stderr = res_data.get("stderr", "")
-            exit_code = res_data.get("exit_code", -1)
-        else:
-            # 默认：本地 subprocess（开发/测试）
-            try:
-                proc = await asyncio.create_subprocess_shell(
-                    final_command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    proc.communicate(), timeout=EXECUTION_TIMEOUT
-                )
-                stdout = stdout_bytes.decode(errors="replace")
-                stderr = stderr_bytes.decode(errors="replace")
-                exit_code = proc.returncode or 0
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                return {
-                    "status": "error",
-                    "reason": f"执行超时（{EXECUTION_TIMEOUT}秒）",
-                    "stdout": "",
-                    "stderr": "",
-                    "exit_code": -1,
-                }
+        res_data = await executor(final_command)
+        stdout = res_data.get("stdout", "")
+        stderr = res_data.get("stderr", "")
+        exit_code = res_data.get("exit_code", -1)
 
         # 5. 脱敏输出（确保真实密码不出现在返回中）
         for secret in real_secrets_list:

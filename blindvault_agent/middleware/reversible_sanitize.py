@@ -216,28 +216,47 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
         """
         在模型调用前扫描并脱敏所有消息内容。
 
-        遍历 state["messages"]，对每条消息的 content 做正则检测。
-        命中后：加密存金库 → 替换为占位符。
+        S1 修复：覆盖 str/list content + tool_calls args。
+        遍历 state["messages"]，提取所有文本块做正则检测。
+        命中后：加密存金库 → 在所有位置替换为占位符。
         """
+        from blindvault_agent.middleware.msg_utils import (
+            extract_scannable_texts,
+            rebuild_content,
+            rebuild_tool_calls,
+        )
+
         messages = list(state.get("messages", []))
         modified = False
         new_messages = []
 
         for msg in messages:
-            content = msg.content if hasattr(msg, 'content') and isinstance(msg.content, str) else ""
-            if not content:
+            # 提取所有可扫描的文本块
+            texts = extract_scannable_texts(msg)
+            if not texts:
                 new_messages.append(msg)
                 continue
 
-            # 检测敏感信息
-            matches = detect_secrets_in_text(content)
-            if not matches:
+            # 合并扫描所有文本块
+            all_matches = []
+            for text in texts:
+                all_matches.extend(detect_secrets_in_text(text))
+
+            if not all_matches:
                 new_messages.append(msg)
                 continue
 
-            # 有匹配：逐个替换（从后向前，不影响偏移）
-            sanitized = content
-            for match in matches:
+            # 去重（同一个值只处理一次）
+            seen_values = set()
+            unique_matches = []
+            for match in all_matches:
+                if match.value not in seen_values:
+                    seen_values.add(match.value)
+                    unique_matches.append(match)
+
+            # 构建替换映射 {原文: 占位符}
+            replacements: dict[str, str] = {}
+            for match in unique_matches:
                 secret_ref = _generate_secret_ref()
 
                 ciphertext = encrypt(match.value, self._encryption_key)
@@ -262,13 +281,8 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
                 # 存入金库（安全铁律：金库不可达则拒绝放行，抛异常中断）
                 self._save_record(record)
 
-                # 替换原文
                 placeholder = f"{{{{secret:{secret_ref}}}}}"
-                sanitized = (
-                    sanitized[:match.value_start]
-                    + placeholder
-                    + sanitized[match.value_end:]
-                )
+                replacements[match.value] = placeholder
 
                 self._sanitize_count += 1
                 logger.info(
@@ -278,10 +292,26 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
                     self._sanitize_count,
                 )
 
-            # 创建替换后的消息副本
-            new_msg = msg.model_copy(update={"content": sanitized})
-            new_messages.append(new_msg)
-            modified = True
+            # 在所有位置执行替换
+            update = {}
+            content = getattr(msg, 'content', None)
+            if content is not None:
+                new_content = rebuild_content(content, replacements)
+                if new_content != content:
+                    update["content"] = new_content
+
+            tool_calls = getattr(msg, 'tool_calls', None)
+            if tool_calls:
+                new_tc = rebuild_tool_calls(tool_calls, replacements)
+                if new_tc != tool_calls:
+                    update["tool_calls"] = new_tc
+
+            if update:
+                new_msg = msg.model_copy(update=update)
+                new_messages.append(new_msg)
+                modified = True
+            else:
+                new_messages.append(msg)
 
         if modified:
             return {"messages": new_messages}

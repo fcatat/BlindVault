@@ -37,14 +37,18 @@ TEST_KEY_RAW = os.urandom(32)
 
 class FakeMessage:
     """简单模拟 langchain 消息对象。"""
-    def __init__(self, content: str, role: str = "user"):
-        self.content = content
+    def __init__(self, content=None, role: str = "user", tool_calls=None):
+        self.content = content if content is not None else ""
         self.role = role
+        self.tool_calls = tool_calls
 
     def model_copy(self, update=None):
-        new = FakeMessage(self.content, self.role)
-        if update and "content" in update:
-            new.content = update["content"]
+        new = FakeMessage(self.content, self.role, self.tool_calls)
+        if update:
+            if "content" in update:
+                new.content = update["content"]
+            if "tool_calls" in update:
+                new.tool_calls = update["tool_calls"]
         return new
 
 
@@ -278,3 +282,53 @@ def test_middleware_vault_failure_blocks():
     state = {"messages": [FakeMessage("密码是 ShouldFail123")]}
     with pytest.raises(ConnectionError):
         mw.before_model(state)
+
+
+# ============================================================
+# S1 测试：list-form content + tool_calls args
+# ============================================================
+
+
+def test_middleware_list_content(middleware):
+    """S1: list-form content blocks 中的密码应被检测。"""
+    msg = FakeMessage(
+        content=[
+            {"type": "text", "text": "密码是 ListPwd123"},
+            {"type": "image_url", "image_url": "https://example.com/img.png"},
+        ]
+    )
+    state = {"messages": [msg]}
+    result = middleware.before_model(state)
+
+    assert result is not None
+    content = result["messages"][0].content
+    # list-form content 中的文本应被替换
+    assert isinstance(content, list)
+    text_block = content[0]
+    assert "ListPwd123" not in text_block["text"]
+    assert "{{secret:" in text_block["text"]
+
+
+def test_middleware_tool_calls_args(middleware):
+    """S1: tool_calls args 中的密码应被检测。"""
+    msg = FakeMessage(
+        content="请执行命令",
+        tool_calls=[
+            {
+                "name": "secure_shell",
+                "args": {
+                    "command": "psql postgresql://user:ToolCallPwd123@db:5432/mydb",
+                },
+                "id": "tc_1",
+            }
+        ],
+    )
+    state = {"messages": [msg]}
+    result = middleware.before_model(state)
+
+    assert result is not None
+    new_msg = result["messages"][0]
+    # tool_calls args 中的连接串密码应被替换
+    assert "ToolCallPwd123" not in str(new_msg.tool_calls)
+    assert "{{secret:" in str(new_msg.tool_calls)
+
