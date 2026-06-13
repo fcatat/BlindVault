@@ -24,6 +24,8 @@ import logging
 import re
 from typing import Optional
 
+from langgraph.types import interrupt
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,8 +94,6 @@ def check_and_interrupt_if_high_risk(command: str) -> None:
     logger.warning("🚨 高危命令审批: %s — %s", command[:80], risk)
 
     # 触发 LangGraph interrupt
-    from langgraph.types import interrupt
-
     decision = interrupt({
         "type": "high_risk_command",
         "command": command,  # 此时命令中只有占位符，不含明文

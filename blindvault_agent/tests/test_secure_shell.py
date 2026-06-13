@@ -202,15 +202,23 @@ async def test_raw_ref_resolve(store, ctx):
 
 @pytest.mark.asyncio
 async def test_dangerous_command_blocked(store, ctx):
-    """危险命令应被拦截。"""
-    result = await secure_shell(
-        command="rm -rf /",
-        store=store,
-        ctx=ctx,
-    )
+    """危险命令应被 HITL 审批拦截（B2 接线后触发 interrupt）。"""
+    from unittest.mock import patch, MagicMock
+
+    # mock interrupt 返回 reject
+    mock_interrupt = MagicMock(return_value={
+        "decisions": [{"type": "reject"}]
+    })
+
+    with patch("blindvault_agent.middleware.hitl.interrupt", mock_interrupt):
+        result = await secure_shell(
+            command="rm -rf /",
+            store=store,
+            ctx=ctx,
+        )
 
     assert result["status"] == "error"
-    assert "拦截" in result["reason"] or "危险" in result["reason"]
+    assert "拒绝" in result["reason"]
 
 
 @pytest.mark.asyncio

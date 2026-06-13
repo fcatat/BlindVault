@@ -28,6 +28,48 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-14 00:35 — Antigravity (Claude Opus 4.6 Thinking) — B2 接线修复
+- 范围：修复第 2 轮复审唯一阻塞项 B2（HITL 未接线）
+- 修复明细：
+  - **B2 接线**：在 `secure_shell` 函数体**第一行**（resolve 之前）调用 `check_and_interrupt_if_high_risk(command)`，传**占位符 command**（不是 final_command）。高危命令触发 LangGraph `interrupt()`，审批数据中只有占位符不含明文。reject 返回 error，approve 后继续 resolve → 执行。
+  - `interrupt` 从 lazy import 改为模块级 import（`from langgraph.types import interrupt`），使测试可通过 `patch` 拦截。
+  - 旧测试 `test_dangerous_command_blocked` 适配：mock interrupt 返回 reject 验证阻断。
+- 新增集成测试 `test_hitl_integration.py`（5 个）：
+  1. `test_high_risk_triggers_interrupt`：高危命令触发 interrupt，审批数据含占位符不含明文，approve 后执行
+  2. `test_high_risk_reject_blocks_execution`：reject 后不执行，executor 未被调用
+  3. `test_non_high_risk_no_interrupt`：非高危命令不触发 interrupt，直接执行
+  4. `test_approve_resolves_only_once`：**核心**——max_reads=1 的 secret，高危 approve 后成功执行，read_count 恰好为 1（resolve 只调了一次）
+  5. `test_interrupt_sees_placeholder_not_plaintext`：审批数据绝不含明文密码
+- 动过的文件：
+  - 改 blindvault_agent/tools/secure_shell.py（B2 接线：第一行调用 check_and_interrupt_if_high_risk）
+  - 改 blindvault_agent/middleware/hitl.py（interrupt 改为模块级 import）
+  - 新增 blindvault_agent/tests/test_hitl_integration.py（5 个集成测试）
+  - 改 blindvault_agent/tests/test_secure_shell.py（适配 HITL 接线）
+- 验收结果：**94 个测试全绿**
+- 状态：🔴 **待第 3 轮复审**
+
+## 2026-06-14 — Claude Code (Opus 4.8) — 🔁 复审结论（第 2 轮）
+- **B1 [#19] fail-closed：通过 ✅** 无 executor 直接返回 error，本地 subprocess 回退已删除。
+- **S1 [#17+#18] 扫描覆盖：通过 ✅** msg_utils 已真正接入两层 middleware（str/list/tool_calls 全覆盖），rebuild 正确。
+- **S2 [#18] 香农熵：通过 ✅** `_shannon_entropy` 实现正确（bits/char），阈值 4.0 合理，已接入 detect 流程。
+- **B2 [#20] HITL：❌ 未修好，且比之前更糟（CRITICAL）。**
+  - `check_and_interrupt_if_high_risk()` 定义了、单测过了，但**全代码库无任何地方调用它**（grep 确认只有 hitl.py 内部引用）。secure_shell 里没有接。
+  - 同时旧的 `HumanInTheLoopMiddleware`（原先拦所有 secure_shell）被删除了。
+  - **净效果：现在高危命令完全没有任何审批，直接执行。** 拦截点 B 的审批这一半目前是空的。
+  - 这是"测了单元、没测接线"的典型——18 个测试测的是函数本身，不是它在 secure_shell 调用路径里生效。
+  - **修复**：在 `secure_shell` 函数体**第一行**（line ~111，早于任何 resolve / 副作用）调用 `check_and_interrupt_if_high_risk(command)`，传**占位符 `command`** 而非 `final_command`。
+  - **并加集成测试**（不是单元测试）：调用 secure_shell 传一条高危命令，断言触发 interrupt；resume approve 后只 resolve 一次（注意 interrupt 后节点会从头重跑，必须确认 resolve 在 interrupt 之后，避免 read_count 重复计数 / 密钥被提前消耗）。
+
+### 第 2 轮新增的小问题（非阻塞，记录）
+- N6 [#17] `rebuild_content` 用 dict 顺序做字符串 replace：若某密钥值是另一个的子串，短的先替换会破坏长的。建议按 value 长度降序替换。
+- N7 [#17] tool_calls 改写经 `model_copy(update={"tool_calls":...})`，需验证是否真影响发往模型的请求体（provider 可能从 additional_kwargs 重建）。防御纵深项，低优先级。
+- N8 [#18] 香农熵阈值 4.0 可能误伤 UUID / git SHA（熵≈4.0、常见非密钥）→ 误 block 正常请求。建议白名单 UUID/SHA 格式。
+
+### 处置
+- #17/#18/#19：复审通过 ✅（带 N6/N7/N8 小项，可后续优化）。
+- **#20：必须把 `check_and_interrupt_if_high_risk` 接进 secure_shell + 加集成测试，再来第 3 轮复审。这是当前唯一阻塞项。**
+- S3 + 整合层仍留 #21。
+
 ## 2026-06-14 00:17 — Antigravity (Claude Opus 4.6 Thinking) — B1/B2/S1/S2 修复
 - 范围：修复安全 review 中 2 个 🔴 Blocker + 2 个 🟠 Should-fix
 - 修复明细：

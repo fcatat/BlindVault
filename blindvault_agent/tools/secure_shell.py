@@ -108,6 +108,22 @@ async def secure_shell(
     Returns:
         {"status": "success"|"error", "stdout": ..., "stderr": ..., "exit_code": ...}
     """
+    # ---- B2 接线：高危命令审批（resolve 之前，command 仅含占位符）----
+    from blindvault_agent.middleware.hitl import (
+        check_and_interrupt_if_high_risk,
+        HighRiskCommandRejected,
+    )
+    try:
+        check_and_interrupt_if_high_risk(command)
+    except HighRiskCommandRejected as e:
+        return {
+            "status": "error",
+            "reason": str(e),
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+        }
+
     real_secrets_list = []
     final_command = command
 
