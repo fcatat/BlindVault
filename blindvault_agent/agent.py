@@ -285,8 +285,9 @@ def create_blindvault_agent(
     if middleware:
         active_middleware.extend(middleware)
 
-    # 3. 默认工具为 secure_shell
-    active_tools = tools if tools is not None else [secure_shell]
+    # 3. 默认工具为 secure_shell 和 record_plan
+    from blindvault_agent.tools.planning import record_plan
+    active_tools = tools if tools is not None else [secure_shell, record_plan]
 
     # 4. 创建 LLM 和 checkpointer
     llm = _create_llm(settings)

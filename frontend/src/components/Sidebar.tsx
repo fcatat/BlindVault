@@ -108,25 +108,25 @@ export function Sidebar({
       <div className="flex-1 px-4 space-y-1">
         <NavItem 
           icon={<Key className="w-4 h-4" />} 
-          label={t('sidebar.credentialVault')} 
+          label={t('sidebar.credentialVault') + ' (legacy 未接入)'} 
           isActive={activeView === 'dashboard'} 
           onClick={() => onNavigate('dashboard')} 
         />
         <NavItem 
           icon={<EyeOff className="w-4 h-4" />} 
-          label={t('sidebar.sanitizationRules')} 
+          label={t('sidebar.sanitizationRules') + ' (legacy 未接入)'} 
           isActive={activeView === 'rules'} 
           onClick={() => onNavigate('rules')} 
         />
         <NavItem 
           icon={<Bot className="w-4 h-4" />} 
-          label={t('sidebar.agentConfig')} 
+          label={t('sidebar.agentConfig') + ' (legacy 未接入)'} 
           isActive={activeView === 'config'} 
           onClick={() => onNavigate('config')} 
         />
         <NavItem 
           icon={<CalendarClock className="w-4 h-4" />} 
-          label={isZh ? '计划定时任务' : 'Scheduled Tasks'} 
+          label={(isZh ? '计划定时任务' : 'Scheduled Tasks') + ' (legacy 未接入)'} 
           isActive={activeView === 'tasks'} 
           onClick={() => onNavigate('tasks')} 
         />

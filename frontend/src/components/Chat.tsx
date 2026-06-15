@@ -5,9 +5,10 @@ import {
   CalendarClock, Play, Pause, FileText, RefreshCw
 } from 'lucide-react';
 import { 
-  runAgent, streamAgent, listSecrets,
-  type AgentRunResponse, type SSEEvent, type SecretMetadata 
+  runAgent, listSecrets,
+  type AgentRunResponse, type SecretMetadata 
 } from '../api';
+import { streamAgent, approveAgent, type SSEEvent } from '../agentApi';
 import { useI18n } from '../i18n';
 
 interface StreamingStep {
@@ -35,6 +36,7 @@ interface Message {
   localModelConfigured?: boolean;
   isEe?: boolean;
   streamingSteps?: StreamingStep[];
+  planSteps?: string[];
   isStreaming?: boolean;
   taskId?: string;
 }
@@ -331,6 +333,13 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
           break;
         }
 
+        case 'plan': {
+          setMessages(prev => prev.map(m =>
+            m.id === agentMsgId ? { ...m, planSteps: data.steps } : m
+          ));
+          break;
+        }
+
         case 'tool_start': {
           // 清空中间轮的 thinking 文本（工具执行前的规划文本不属于最终回复）
           accumulatedText = '';
@@ -367,7 +376,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
           break;
         }
 
-        case 'approval_required': {
+        case 'interrupt': {
           // 切换为审批模式
           setLastUserMessage(text);
           const approvalMsg: Message = {
@@ -376,7 +385,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
             text: '安全审批挂起',
             approvalStatus: 'pending',
             pendingCommand: data.pending_command,
-            triggeredRule: data.triggered_rule || '',
+            triggeredRule: data.risk_description || '',
           };
           setMessages(prev => [
             ...prev.filter(m => m.id !== agentMsgId),
@@ -436,12 +445,8 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
 
     try {
       await streamAgent(
-        {
-          user_message: text,
-          session_id: sessionId,
-          history,
-          confirmed: isConfirmed || false,
-        },
+        text,
+        sessionId,
         handleSSEEvent,
         controller.signal,
       );
@@ -467,29 +472,24 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     }
   };
 
-  const handleApprove = (approvalMsgId: number) => {
+  const handleApprove = async (approvalMsgId: number) => {
     // 1. 将该消息状态置为 approved
     setMessages(prev => prev.map(m => m.id === approvalMsgId ? { ...m, approvalStatus: 'approved' } : m));
     
-    // 2. 找到用于重新发送的文本
-    let textToSend = lastUserMessage;
-    if (!textToSend) {
-      const idx = messages.findIndex(m => m.id === approvalMsgId);
-      if (idx > 0) {
-        for (let i = idx - 1; i >= 0; i--) {
-          if (messages[i].type === 'user') {
-            textToSend = messages[i].text;
-            break;
-          }
-        }
-      }
-    }
-    
-    // 3. 发送
-    if (textToSend) {
-      handleSend(textToSend, true);
-    } else {
-      showToast('⚠️ 未找到前置指令，请尝试重新输入。');
+    setIsLoading(true);
+    try {
+      const data = await approveAgent(sessionId, 'approve');
+      const finalMsg: Message = {
+        id: Date.now() + 20,
+        type: 'agent',
+        text: data.reply || '',
+        toolCalls: data.tool_output ? [{ tool: 'secure_shell_result', args: { output: data.tool_output } }] : [],
+      };
+      setMessages(prev => [...prev, finalMsg]);
+    } catch (e: any) {
+      showToast('审批执行失败: ' + e.message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -727,6 +727,40 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                     >
                       {renderMessageContent(msg.id === 0 ? t('chat.welcome') : msg.text)}
 
+                      {/* 执行计划展示 */}
+                      {msg.planSteps && msg.planSteps.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-outline-variant/40">
+                          <p className="text-[11px] font-bold text-on-surface mb-2 flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5 text-primary" />
+                            执行计划
+                          </p>
+                          <ul className="space-y-1.5">
+                            {msg.planSteps.map((step, idx) => {
+                              // 根据已完成的工具调用数量粗略判断状态
+                              const doneCount = msg.streamingSteps?.filter(s => s.type === 'tool_end').length || 0;
+                              const isDone = doneCount > idx;
+                              const isActive = msg.isStreaming && doneCount === idx;
+                              return (
+                                <li key={idx} className="flex items-start gap-2 text-[11px]">
+                                  {isDone ? (
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
+                                  ) : (
+                                    <div className="w-3.5 h-3.5 rounded-full border border-outline-variant shrink-0 mt-0.5 flex items-center justify-center">
+                                      {isActive && (
+                                        <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse"></div>
+                                      )}
+                                    </div>
+                                  )}
+                                  <span className={isDone ? 'text-on-surface-variant line-through opacity-70' : 'text-on-surface'}>
+                                    {step}
+                                  </span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
+
                       {/* SSE 流式执行步骤进度 */}
                       {msg.streamingSteps && msg.streamingSteps.length > 0 && (() => {
                         // 将 tool_start + tool_end 配对合并
@@ -823,12 +857,12 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                                       <div>
                                         <span className="text-secondary font-semibold">结果:</span>
                                         <pre className="mt-0.5 text-on-surface-variant bg-surface-dim/60 rounded px-2 py-1 overflow-x-auto whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
-                                          {p.result.stdout
+                                          {renderRedacted(p.result.stdout
                                             ? String(p.result.stdout).substring(0, 500) + (String(p.result.stdout).length > 500 ? '\n... (截断)' : '')
                                             : p.result.raw
                                               ? String(p.result.raw).substring(0, 500)
                                               : JSON.stringify(p.result, null, 2).substring(0, 500)
-                                          }
+                                          )}
                                         </pre>
                                       </div>
                                     )}
@@ -1320,6 +1354,21 @@ function CopyButton({ text }: { text: string }) {
       )}
     </button>
   );
+}
+
+function renderRedacted(text: string): React.ReactNode {
+  if (!text) return null;
+  const parts = text.split('[REDACTED]');
+  return parts.map((part, i) => (
+    <React.Fragment key={i}>
+      {part}
+      {i < parts.length - 1 && (
+        <span className="bg-red-500 text-white px-1 py-0.5 rounded text-[10px] mx-0.5 font-bold shadow-sm shadow-red-500/20">
+          [REDACTED]
+        </span>
+      )}
+    </React.Fragment>
+  ));
 }
 
 function renderMessageContent(text: string): React.ReactNode {

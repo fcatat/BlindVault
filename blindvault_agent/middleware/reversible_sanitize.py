@@ -129,6 +129,8 @@ def detect_secrets_in_text(text: str) -> list[SensitiveMatch]:
                 continue
             if value.startswith("{{secret:") or value.startswith("sec_live_"):
                 continue
+            if value == "[REDACTED]" or value == "$SECRET":
+                continue
             if value.lower() in _SKIP_WORDS:
                 continue
             if value in seen_values:
@@ -149,6 +151,8 @@ def detect_secrets_in_text(text: str) -> list[SensitiveMatch]:
         if len(password) < 2 or password in seen_values:
             continue
         if password.startswith("{{secret:") or password.startswith("sec_live_") or password.startswith("sec_test_"):
+            continue
+        if password == "[REDACTED]" or password == "$SECRET":
             continue
         seen_values.add(password)
         matches.append(SensitiveMatch(

@@ -106,7 +106,10 @@ def _strip_placeholders(text: str) -> str:
     # 2. 消除其它孤立的占位符
     text = _PLACEHOLDER_PATTERN.sub("", text)
     # 3. 消除裸的 secret_ref 引用
-    return _RAW_SECRET_REF_PATTERN.sub("", text)
+    text = _RAW_SECRET_REF_PATTERN.sub("", text)
+    # 4. 消除通用安全占位符
+    text = text.replace("[REDACTED]", "").replace("$SECRET", "")
+    return text
 
 
 # ============================================================

@@ -2,10 +2,11 @@
 
 # 🔐 BlindVault
 
-**AI 看不见密码，运维不丢效率。**
+**AI 看不到密码，运维不丢东西。**
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![LangGraph](https://img.shields.io/badge/LangChain-create__agent-1C3C3C.svg)](https://langchain.com)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
 
 [English](README.md) | **中文**
@@ -14,82 +15,92 @@
 
 ---
 
-## 这是什么？
+## BlindVault 是什么？
 
-BlindVault 是一个 **AI 运维安全平台**，让运维团队使用 LLM Agent 执行数据库查询、SSH 远程命令、API 调用等日常操作，同时确保 **密码和密钥永远不会暴露给 AI 模型**。
-
-```
-你输入：    postgresql://admin:MyPassword@db.prod/app 帮我查下有几张表
-AI 看到：   postgresql://admin:{{secret:sec_***}}@db.prod/app 帮我查下有几张表
-```
-
-AI 执行命令，密码留在保险箱里。始终如此。
-
-## 架构
+BlindVault 是**给 AI 运维 Agent 叠加的一层安全层**。它让团队用 LLM Agent 执行运维任务——数据库查询、SSH、API 调用——同时保证 **密码和密钥永不进入 AI 模型的上下文**，并且 **高危操作必须由人工审批后才执行**。
 
 ```
-用户输入 ──→ [自动脱敏器] ──→ LLM（只看到 {{secret:sec_xxx}}）
-                 ↓                              ↓
-           [AES-256 保险箱]  ←←←  [安全工具节点：解密 & 注入]
-             (Redis + PG)                       ↓
-                                      [执行：psql/ssh/curl]
-                                                ↓
-                                          结果 → 用户
+你输入：   postgresql://admin:MyPassword@db.prod/app —— 列出所有表
+AI 看到：  postgresql://admin:{{secret:sec_***}}@db.prod/app —— 列出所有表
 ```
 
-**零知识保证**：密码永远不进入 AI 上下文窗口——不在 prompt 里、不在对话历史里、不在日志里。
+AI 用占位符构造命令，真实密码只在执行的瞬间、在安全工具内部注入，永远不进入提示词、历史、日志，也不进入持久化的 checkpoint。
 
-## 功能特性
+BlindVault 构建在成熟的 Agent 框架（**LangChain `create_agent` / LangGraph**）之上，所有模型访问统一经由**你自己的 LiteLLM 网关**分发——因此 **终端用户无需任何自己的 LLM 账户**，同一个 Agent 可以跑在网关路由到的 **GPT、Claude 或任意模型**上。
 
-### 社区版（免费开源）
+## 架构 —— 两个拦截点
+
+```
+   用户                 ┌──────────────────────────────────────────────┐
+ （无需 LLM 账户）──────▶│        BlindVault Agent                        │
+                        │   LangChain create_agent · LangGraph 运行时     │
+                        │                                                │
+                        │   ▸ 拦截点 A —— 出站脱敏                         │
+                        │       ReversibleSanitizeMiddleware  (→ 金库)   │
+                        │       PIIBackstopMiddleware          (阻断)    │
+                        │   ▸ 拦截点 B —— 执行                            │
+                        │       HITL 审批（高危暂停/恢复）                 │
+                        │       secure_shell（执行瞬间解析密钥）           │
+                        └─────────────────┬──────────────────────────────┘
+                                          │ OpenAI /v1/chat/completions
+                                          ▼
+                              LiteLLM 网关（持有你的模型密钥）
+                                          ▼
+                              GPT · Claude · 任意路由模型
+
+   金库：Redis + AES-256-GCM  ◀── 仅在执行瞬间解密，绝不进入上下文
+```
+
+**两条规则覆盖整个设计：**
+
+- **拦截点 A** —— 一切流向模型的内容必须无密码。凭证在请求离开 Agent **之前**（也在被 checkpoint **之前**）就被检测、加密入金库、替换为 `{{secret:sec_xxx}}`。
+- **拦截点 B** —— 执行时，占位符在 `secure_shell` 内部解析回真实密钥；高危命令先暂停等人工审批。
+
+**零知识保证**：密钥永不进入 AI 上下文窗口——不在提示词里，不在历史里，不在日志里，也不在持久化 checkpoint 里。
+
+## 功能
 
 | 功能 | 说明 |
 |------|------|
-| 🔍 **自动脱敏** | 正则检测密码、Token、API Key、数据库连接串并自动替换 |
-| 🔐 **AES-256-GCM 加密** | 所有密钥静态加密存储，密钥可配置 |
-| 🛡️ **隔离诊断沙箱** | 诊断命令（如 `secure_shell`）移至独立的隔离容器沙箱中执行，主业务容器重归纯净，避免进程逃逸和提权风险，提供双向结果脱敏 |
-| 💾 **双写归档留底** | 凭证元数据双写 PostgreSQL 归档表，不含密钥密文。即使 Redis 缓存中 TTL 过期删除，历史凭证元数据在前端仍持久可见，便于审计 |
-| ⏱️ **实时平滑倒计时** | 前端采用 1s 本地定时器，倒计时和进度条平滑递减；归零瞬间卡片自动置灰，顶部统计卡片（Active/Consumed）数字实时同步扣减 |
-| 📋 **一键复制引用** | 凭证卡片提供一键复制安全引用 `{{secret:sec_xxx}}` 的快捷按钮，并带“已复制”绿色勾选提示，避免打字出错 |
-| 📝 **历史脱敏** | 对话历史使用脱敏文本，多轮对话不泄露密码 |
-| 🌐 **国际化** | 完整中英文支持，一键切换 |
-| 🤖 **任意 LLM** | 兼容 OpenAI 接口（GPT、Claude、Qwen、DeepSeek、LiteLLM 本地模型） |
-| 📊 **执行追踪** | 每次工具调用和密钥访问的可视化审计轨迹 |
-| 💾 **持久化配置** | PostgreSQL 存储 LLM 配置，重启不丢失 |
-| 🔒 **日志脱敏** | 中间件自动脱敏所有请求/响应日志 |
+| 🔒 **零知识密钥保护** | 密码 / token / 连接串自动识别，AES-256-GCM 加密入金库，替换为可逆的 `{{secret:sec_xxx}}` 占位符。模型只看得到占位符。 |
+| 🛡️ **纵深防御脱敏** | 主层可逆脱敏（回写金库）+ 不可逆的 **PII 兜底层**：任何漏网的凭证会让整个请求被**阻断**。 |
+| ✋ **人工审批（HITL）** | 高危命令（`DROP`、`rm -rf`、`TRUNCATE`…）暂停，等人工显式批准/拒绝。基于 Redis checkpointer 的持久化暂停-恢复，重启不丢。 |
+| 🧠 **判断权交给你** | 系统提示词要求模型**不要自己拒绝**高危操作，而是把它交给审批层，由人来定。 |
+| 📋 **任务计划拆解** | 多步任务先用 `record_plan` 拆成步骤清单再执行，随执行打勾。 |
+| 🔁 **自愈重试** | 失败时读取诊断增强信息、修正命令、重试，多次失败后优雅放弃。 |
+| 🧼 **输出脱敏** | 命令输出里的真实密钥在重新进入上下文前替换为 `[REDACTED]`。 |
+| 🤖 **模型无关** | 经你的 **LiteLLM 网关** 跑 GPT / Claude / 任意模型；用户无需 LLM 账户，密钥由网关持有。 |
+| 🔐 **9 步解析校验** | 每次密钥解析都过一条严格的权限链（见下）。 |
+| 🌐 **Web 界面** | React 前端，带实时执行时间线：计划清单、工具调用、重试、审批卡、脱敏回显。 |
 
-### 企业版
+## 工作原理
 
-| 功能 | 说明 |
-|------|------|
-| 🧠 **本地模型网关** | 双层保护：敏感内容先过本地 LLM 脱敏，再交给云端 LLM 处理 |
-| 👥 **SSO / LDAP / OIDC** | 企业身份认证集成 |
-| 📋 **审计日志 & 合规** | 所有密钥访问记录，可导出 SOC2/ISO27001 报告 |
-| 🔀 **多模型编排** | 按策略将不同任务路由到不同模型 |
-| 🛡️ **策略引擎** | 超越 TTL/读取计数的细粒度访问控制 |
-| 📦 **硬件一体机** | 预配置硬件盒子，支持离线部署（空气隔离） |
-| 🏢 **多租户 & RBAC** | 基于团队的权限控制 |
+1. **自然表达** —— 像跟同事说话一样直接把凭证写进去。
+2. **入口处拦截** —— 密码被识别、AES-256-GCM 加密、带 TTL 存储，并在 Agent 运行**之前**替换为占位符。
+3. **AI 盲执行** —— 它只看到 `{{secret:sec_xxx}}`。真实凭证在安全执行层注入，高危步骤暂停等你审批。
 
-> 📧 企业版咨询：[联系销售](mailto:enterprise@blindvault.dev)
+### 安全模型
+
+```
+密钥生命周期：  创建(active) → 使用(reads-1) → 耗尽 / 过期 / 撤销
+
+解析校验链（每次解析）：
+  ✓ 密钥存在        ✓ 状态 == active      ✓ user_id 匹配
+  ✓ session_id 匹配 ✓ tenant_id 匹配      ✓ tool 在 allowed_tools 内
+  ✓ destination 匹配 ✓ 未过期             ✓ read_count < max_reads
+  → 任一失败：统一返回 "Secret resolution denied"（不泄露原因）
+```
+
+密钥**绝不**放进 Agent 状态或可序列化的 `RunContextWrapper.context`——只在金库里，执行瞬间临时解析。
 
 ## 快速开始
 
-### 一键安装（Docker）
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fcatat/BlindVault/main/install.sh | bash
-```
-
-> 仅需 Docker 和 Git。安装脚本会引导你配置端口和 LLM（可跳过，稍后在 Web 界面配置）。
-
-### 手动安装
-
-### 环境要求
+### 前置依赖
 
 - Python 3.11+
 - Node.js 18+
-- Redis 7+
-- PostgreSQL 14+
+- **Redis Stack**（含 RedisJSON + RediSearch —— LangGraph 的 Redis checkpointer 需要）
+- 一个你自己的 **LiteLLM 网关**，暴露 `/v1/chat/completions` 且至少注册一个 model alias
 
 ### 1. 克隆 & 安装
 
@@ -97,12 +108,9 @@ curl -fsSL https://raw.githubusercontent.com/fcatat/BlindVault/main/install.sh |
 git clone https://github.com/fcatat/BlindVault.git
 cd BlindVault
 
-# 后端
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# 前端
 cd frontend && npm install && cd ..
 ```
 
@@ -110,112 +118,97 @@ cd frontend && npm install && cd ..
 
 ```bash
 cp .env.example .env
-# 编辑 .env，生成加密密钥：
+# 生成加密密钥：
 python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
 ```
 
-### 3. 启动服务
+在 `.env` 中设置：
+
+```ini
+BLINDVAULT_ENCRYPTION_KEY=<base64 的 32 字节密钥>
+BLINDVAULT_LITELLM_BASE_URL=https://<你的 litellm 网关>/v1
+BLINDVAULT_LITELLM_API_KEY=<你的 virtual key>
+BLINDVAULT_DEFAULT_MODEL=<网关上的 model alias>   # 如 gpt-4o / claude-sonnet
+BLINDVAULT_REDIS_URL=redis://localhost:6379/0
+```
+
+### 3. 启动
 
 ```bash
-# Redis & PostgreSQL（Docker 方式）
-docker run -d --name blindvault-redis -p 6379:6379 redis:7-alpine
-docker run -d --name blindvault-pg -p 5432:5432 \
-  -e POSTGRES_DB=blindvault -e POSTGRES_PASSWORD=postgres \
-  postgres:16-alpine
+# Redis Stack（提供 RedisJSON + RediSearch）
+docker run -d --name blindvault-redis -p 6379:6379 redis/redis-stack-server:latest
 
-# 后端（端口 8000）
-uvicorn backend.main:app --reload --port 8000
+# Agent + Web API（端口 8000）
+uvicorn blindvault_agent.web:app --port 8000
 
 # 前端（端口 3000）
 cd frontend && npm run dev
 ```
 
-打开 http://localhost:3000 开始使用！
-
-## 工作原理
-
-1. **自然输入** — 像和同事说话一样，直接在消息中包含密码
-2. **自动拦截** — 密码被正则检测，AES-256-GCM 加密存储，设置 TTL 自动过期
-3. **盲执行** — LLM 只看到 `{{secret:sec_xxx}}` 引用，真实密码在安全执行层注入
-
-### 安全模型
+打开前端，试试：
 
 ```
-密钥生命周期：创建 (active) → 使用 (reads-1) → 耗尽 / 过期 / 撤销
-
-权限校验链（每次解析 secret 时）：
-  ✓ 密钥存在           ✓ 状态 == active      ✓ user_id 匹配
-  ✓ session_id 匹配    ✓ tenant_id 匹配      ✓ 工具在 allowed_tools 中
-  ✓ 目标在 allowed_destinations 中   ✓ 未过期   ✓ read_count < max_reads
-  → 任何一项失败：统一返回 "Secret resolution denied"（不泄露具体原因）
+连接 postgresql://admin:MyPass123@db.prod/app，列出所有表
+帮我部署 nginx：安装、启动、验证 80 端口在监听
+把 staging 库删了：psql ... -c 'DROP DATABASE staging'    # → 暂停等审批
 ```
 
-### 日志脱敏
-
-- 字段名匹配 `value|password|secret|token|api_key|authorization|cookie` → `[REDACTED]`
-- Secret 引用 → `sec_live_abcd****`
-- `POST /api/secrets` 请求体完全不记录
-- 异常日志不输出完整请求体
+> **命令行**：`python -m blindvault_agent.cli` 在终端里跑同一个 Agent。
 
 ## 技术栈
 
 | 层 | 技术 |
 |----|------|
-| 后端 | FastAPI + LangGraph + asyncpg + redis-py |
-| 前端 | React 18 + TypeScript + Vite |
-| 加密 | AES-256-GCM (cryptography) |
-| 存储 | Redis（密钥） + PostgreSQL（配置） |
-| LLM | 任意 OpenAI 兼容接口 |
+| Agent 运行时 | LangChain `create_agent` + LangGraph（持久化 checkpointer） |
+| 安全层 | 自定义 `AgentMiddleware`（可逆脱敏 + PII 兜底）+ HITL middleware |
+| 模型访问 | 你的 LiteLLM 网关（`/v1/chat/completions`），任意模型 |
+| 加密 | AES-256-GCM（`cryptography`） |
+| 金库 / 状态 | Redis Stack（密钥金库 + LangGraph checkpointer） |
+| API / Web | FastAPI（SSE 流式）+ React 18 + TypeScript + Vite |
 
 ## 项目结构
 
 ```
-backend/
-├── main.py                # FastAPI 入口
-├── config.py              # 环境变量配置
-├── crypto.py              # AES-256-GCM 加解密
-├── models.py              # Pydantic 数据模型
-├── sanitizer.py           # 消息自动脱敏器
-├── redis_store.py         # Redis 密钥存储
-├── policy.py              # 权限校验引擎
-├── redaction.py           # 日志脱敏中间件
-├── db.py                  # PostgreSQL 持久化
-├── api/
-│   ├── secrets.py         # 密钥 CRUD API
-│   ├── agent.py           # Agent 运行 API
-│   └── config.py          # LLM 配置 API
-├── agent/
-│   └── graph.py           # LangGraph Agent（mock + OpenAI）
+blindvault_agent/            # 当前的安全 Agent
+├── agent.py                 # create_blindvault_agent() + BlindVaultAgent 包装器（入口脱敏 + 依赖注入）
+├── web.py                   # FastAPI：/api/chat/stream（SSE）、/api/approve
+├── cli.py                   # 终端入口 + 本地执行器
+├── config.py                # AgentSettings（网关、模型、redis、系统提示词）
+├── middleware/
+│   ├── reversible_sanitize.py   # 拦截点 A —— 主层（回写金库）
+│   ├── pii_backstop.py          # 拦截点 A —— 兜底（block 模式 + 香农熵）
+│   ├── hitl.py                  # 拦截点 B —— 高危审批
+│   └── msg_utils.py             # 扫描 str/list/tool_call 内容
 ├── tools/
-│   ├── registry.py        # 工具注册表 + 黑名单
-│   ├── executor.py        # 安全工具节点 (SecureToolNode)
-│   ├── secure_shell.py    # 通用安全 Shell 工具
-│   └── browser_login_mock.py
-└── tests/
+│   ├── secure_shell.py          # 拦截点 B —— 执行瞬间解析注入
+│   └── planning.py              # record_plan（任务拆解）
+├── security/                # 原样复用、未改动的核心
+│   ├── crypto.py                # AES-256-GCM
+│   ├── policy.py                # resolve_secret —— 9 步校验链
+│   ├── redis_store.py           # 密钥金库
+│   └── models.py
+└── tests/                   # policy / 脱敏 / PII / shell / HITL / e2e
 
-frontend/
-├── src/
-│   ├── App.tsx             # 主应用 + 会话管理
-│   ├── api.ts              # 后端 API 客户端
-│   ├── i18n.tsx            # 国际化（中/英）
-│   └── components/
-│       ├── Chat.tsx        # AI 对话（脱敏历史）
-│       ├── Dashboard.tsx   # 凭证库概览
-│       ├── Sidebar.tsx     # 导航 + 企业版功能
-│       ├── Header.tsx      # 语言切换 + 用户菜单
-│       ├── AgentConfig.tsx # LLM 配置
-│       ├── ExecutionTrace.tsx
-│       └── AddCredentialModal.tsx
+frontend/                    # React 界面（Chat 已适配新 Agent；旧标签页标记 legacy）
+├── src/agentApi.ts          # /api/chat/stream 的 SSE 客户端
+└── src/components/Chat.tsx   # 执行时间线：计划 / 工具 / 重试 / 审批 / [REDACTED]
+
+backend/                     # 旧版（改造前自研 Agent）—— 保留供参考
 ```
 
-## 开源协议
+> **说明：** `backend/` 是改造前的实现，保留供参考。当前产品在 `blindvault_agent/`。部分旧前端标签页（Dashboard / RulesConfig 等）标记为 *(legacy)*，未接入新 Agent。
 
-**社区版** 采用 [AGPL-3.0](LICENSE) 开源协议。
+## 路线图
 
-**企业版** 采用商业授权。[联系我们](mailto:enterprise@blindvault.dev) 了解详情。
+- LiteLLM 网关层独立 guardrail，作为应用内 middleware 之外的网络层兜底（纵深防御）。
+- SSO / RBAC / 审计导出 / 多模型路由策略。
+
+## 许可
+
+基于 [AGPL-3.0](LICENSE) 开源。
 
 ---
 
 <div align="center">
-  <sub>用 🔐 守护每一个密码 — BlindVault 团队</sub>
+  <sub>用 🔐 构建 —— AI 看不到密码，运维不丢东西。</sub>
 </div>

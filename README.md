@@ -6,6 +6,7 @@
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://python.org)
+[![LangGraph](https://img.shields.io/badge/LangChain-create__agent-1C3C3C.svg)](https://langchain.com)
 [![React 18](https://img.shields.io/badge/React-18-61DAFB.svg)](https://reactjs.org)
 
 **English** | [中文](README_CN.md)
@@ -16,93 +17,100 @@
 
 ## What is BlindVault?
 
-BlindVault is an **AI-powered ops security platform** that lets DevOps teams use LLM agents for infrastructure tasks — database queries, SSH, API calls — while ensuring **passwords and secrets are NEVER exposed to the AI model**.
+BlindVault is a **security layer for AI ops agents**. It lets teams use an LLM agent for infrastructure tasks — database queries, SSH, API calls — while guaranteeing that **passwords and secrets are NEVER exposed to the AI model**, and that **high-risk operations require a human to approve them**.
 
 ```
 You type:   postgresql://admin:MyPassword@db.prod/app — show me all tables
 AI sees:    postgresql://admin:{{secret:sec_***}}@db.prod/app — show me all tables
 ```
 
-The AI executes the command. The password stays in the vault. Always.
+The AI builds the command using a placeholder. The real password is injected only at execution time, inside the secure tool. It never enters the prompt, the history, the logs, or the checkpoint.
 
-## Architecture
+BlindVault is built on top of a mature agent framework (**LangChain `create_agent` / LangGraph**) and brokers all model access through **your own LiteLLM gateway** — so **end users don't need any LLM account of their own**, and the same agent runs against **GPT, Claude, or any model** your gateway routes to.
+
+## Architecture — two interception points
 
 ```
-User Input ──→ [Auto Sanitizer] ──→ LLM (only sees {{secret:sec_xxx}})
-                    ↓                              ↓
-              [AES-256 Vault]  ←←←  [SecureToolNode: decrypt & inject]
-                (Redis + PG)                       ↓
-                                         [Execute: psql/ssh/curl]
-                                                   ↓
-                                             Result → User
+   User                ┌──────────────────────────────────────────────┐
+ (no LLM account ──────▶│        BlindVault Agent                        │
+  needed)               │   LangChain create_agent · LangGraph runtime   │
+                        │                                                │
+                        │   ▸ Interception A — outbound sanitize         │
+                        │       ReversibleSanitizeMiddleware  (→ vault)  │
+                        │       PIIBackstopMiddleware          (block)   │
+                        │   ▸ Interception B — execution                 │
+                        │       HITL approval (high-risk pause/resume)   │
+                        │       secure_shell (resolve secret at exec)    │
+                        └─────────────────┬──────────────────────────────┘
+                                          │ OpenAI /v1/chat/completions
+                                          ▼
+                              LiteLLM Gateway  (holds your model keys)
+                                          ▼
+                              GPT · Claude · any routed model
+
+   Vault: Redis + AES-256-GCM  ◀── decrypted only at execution, never in context
 ```
 
-**Zero-Knowledge Guarantee**: Secrets never enter the AI context window. Not in the prompt, not in the history, not in the logs.
+**Two rules cover the whole design:**
+
+- **Interception A** — everything flowing *to* the model must be secret-free. Secrets are detected, encrypted into the vault, and replaced with `{{secret:sec_xxx}}` *before* the request leaves the agent (and before it is ever checkpointed).
+- **Interception B** — at execution time the placeholder is resolved back to the real secret inside `secure_shell`; high-risk commands pause for human approval first.
+
+**Zero-Knowledge Guarantee**: secrets never enter the AI context window — not in the prompt, not in the history, not in the logs, not in the durable checkpoint.
 
 ## Features
 
-### Community Edition (Free & Open Source)
-
 | Feature | Description |
 |---------|-------------|
-| 🔍 **Auto Sanitization** | Regex-based detection of passwords, tokens, API keys, connection strings |
-| 🔐 **AES-256-GCM Encryption** | All secrets encrypted at rest with configurable key |
-| 🛡️ **Sandbox Isolation** | Diagnostic commands (e.g., `secure_shell`) run inside an isolated Docker sandbox. The backend service stays clean, eliminating host privilege escalation risks. Supports bi-directional output sanitization |
-| 💾 **PG Metadata Archiver** | Dual-write design. Metadata is archived to PostgreSQL (excluding secrets plaintext). Expired secrets remain persistent on the dashboard even after Redis TTL eviction for auditing |
-| ⏱️ **Smooth Ticker Countdown** | Frontend uses a 1s local interval. Countdown and progress bar slide smoothly. On zero, the card auto-disables and stats adjust in real-time without API overhead |
-| 📋 **One-Click Reference Copy** | Interactive copy button for `{{secret:sec_xxx}}` placeholder on the credential card with feedback checkmark to prevent typing mistakes |
-| 📝 **History Sanitization** | Conversation history uses sanitized text — no password leaks in multi-turn |
-| 🌐 **i18n** | Full English/Chinese support with one-click toggle |
-| 🤖 **Any LLM** | OpenAI-compatible API (GPT, Claude, Qwen, DeepSeek, local models via LiteLLM) |
-| 📊 **Execution Trace** | Visual audit trail of every tool call and secret access |
-| 💾 **Persistent Config** | PostgreSQL-backed LLM configuration, survives restarts |
-| 🔒 **Log Redaction** | Middleware sanitizes all request/response logs automatically |
+| 🔒 **Zero-knowledge secret protection** | Passwords / tokens / connection strings auto-detected, AES-256-GCM encrypted into the vault, replaced with reversible `{{secret:sec_xxx}}` placeholders. The model only ever sees placeholders. |
+| 🛡️ **Defense-in-depth sanitization** | Primary reversible sanitizer (vault-backed) + a non-reversible **PII backstop** that *blocks* the request if any credential slips through. |
+| ✋ **Human-in-the-loop approval** | High-risk commands (`DROP`, `rm -rf`, `TRUNCATE`, …) pause the run for explicit human approve/reject. Durable pause/resume via the Redis checkpointer — survives restarts. |
+| 🧠 **Judgment delegated to you** | The model is told *not* to refuse high-risk ops on its own; it routes them to the approval layer, where a human decides. |
+| 📋 **Task planning** | Multi-step tasks are broken into a step checklist (`record_plan`) before execution, ticked off as it runs. |
+| 🔁 **Self-healing retry** | On failure the agent reads enriched diagnostics, fixes the command, retries, and gives up gracefully after repeated failures. |
+| 🧼 **Output redaction** | Real secrets in command output are replaced with `[REDACTED]` before results re-enter context. |
+| 🤖 **Model-agnostic** | Runs against GPT, Claude, or any model via your **LiteLLM gateway** — users need no LLM account; the gateway holds the keys. |
+| 🔐 **9-step resolve policy** | Every secret resolution passes a strict permission chain (see below). |
+| 🌐 **Web UI** | React frontend with a live execution timeline: plan checklist, tool calls, retries, approval cards, redacted output. |
 
-### Enterprise Edition
+## How it works
 
-| Feature | Description |
-|---------|-------------|
-| 🧠 **Local Model Gateway** | Double-layer protection: local LLM sanitizes before cloud LLM processes |
-| 👥 **SSO / LDAP / OIDC** | Enterprise identity integration |
-| 📋 **Audit Log & Compliance** | Every secret access logged, SOC2/ISO27001 exportable |
-| 🔀 **Multi-Model Routing** | Route tasks to different models with policy rules |
-| 🛡️ **Policy Engine** | Fine-grained access control beyond TTL/read-count |
-| 📦 **Hardware Appliance** | Pre-configured box, air-gap ready |
-| 🏢 **Multi-tenant & RBAC** | Team-based access control |
+1. **You talk naturally** — type credentials in plain language, like talking to a colleague.
+2. **BlindVault intercepts at the entrance** — passwords are detected, AES-256-GCM encrypted, stored with TTL, and replaced with placeholders *before* the agent runs.
+3. **The AI plans and acts blindly** — it only sees `{{secret:sec_xxx}}`. Real credentials are injected at the secure execution layer, and high-risk steps pause for your approval.
 
-> 📧 Enterprise inquiries: [Contact Sales](mailto:enterprise@blindvault.dev)
+### Security model
 
-## Quick Start
+```
+Secret lifecycle:  Created (active) → Used (reads-1) → Exhausted / Expired / Revoked
 
-### One-Line Install (Docker)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/fcatat/BlindVault/main/install.sh | bash
+Policy chain (every resolve):
+  ✓ Secret exists        ✓ Status == active     ✓ user_id match
+  ✓ session_id match     ✓ tenant_id match      ✓ tool in allowed_tools
+  ✓ destination match    ✓ Not expired          ✓ read_count < max_reads
+  → Any failure: generic "Secret resolution denied" (no info leak)
 ```
 
-> Only requires Docker & Git. The installer will guide you through port configuration and optional LLM setup.
+Secrets are **never** placed in the agent state or the serializable `RunContextWrapper.context` — only in the vault, resolved transiently at the moment of execution.
 
-### Manual Install
+## Quick Start
 
 ### Prerequisites
 
 - Python 3.11+
 - Node.js 18+
-- Redis 7+
-- PostgreSQL 14+
+- **Redis Stack** (with RedisJSON + RediSearch — required by the LangGraph Redis checkpointer)
+- A **LiteLLM gateway** you control, exposing `/v1/chat/completions` with at least one model alias
 
-### 1. Clone & Install
+### 1. Clone & install
 
 ```bash
 git clone https://github.com/fcatat/BlindVault.git
 cd BlindVault
 
-# Backend
-python -m venv .venv
-source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Frontend
 cd frontend && npm install && cd ..
 ```
 
@@ -110,110 +118,97 @@ cd frontend && npm install && cd ..
 
 ```bash
 cp .env.example .env
-# Edit .env — generate encryption key:
+# generate an encryption key:
 python -c "import os,base64; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
 ```
 
-### 3. Start Services
+Set in `.env`:
+
+```ini
+BLINDVAULT_ENCRYPTION_KEY=<base64 32-byte key>
+BLINDVAULT_LITELLM_BASE_URL=https://<your-litellm-gateway>/v1
+BLINDVAULT_LITELLM_API_KEY=<your virtual key>
+BLINDVAULT_DEFAULT_MODEL=<a model alias on your gateway>   # e.g. gpt-4o / claude-sonnet
+BLINDVAULT_REDIS_URL=redis://localhost:6379/0
+```
+
+### 3. Start
 
 ```bash
-# Redis & PostgreSQL (Docker)
-docker run -d --name blindvault-redis -p 6379:6379 redis:7-alpine
-docker run -d --name blindvault-pg -p 5432:5432 -e POSTGRES_DB=blindvault -e POSTGRES_PASSWORD=postgres postgres:16-alpine
+# Redis Stack (provides RedisJSON + RediSearch)
+docker run -d --name blindvault-redis -p 6379:6379 redis/redis-stack-server:latest
 
-# Backend (port 8000)
-uvicorn backend.main:app --reload --port 8000
+# Agent + web API (port 8000)
+uvicorn blindvault_agent.web:app --port 8000
 
 # Frontend (port 3000)
 cd frontend && npm run dev
 ```
 
-Open http://localhost:3000 and start chatting!
-
-## How It Works
-
-1. **You talk naturally** — Type credentials in plain language, just like talking to a colleague
-2. **BlindVault intercepts** — Passwords auto-detected, encrypted with AES-256-GCM, stored with TTL
-3. **AI executes blindly** — LLM sees only `{{secret:sec_xxx}}` references. Real credentials injected at the secure execution layer
-
-### Security Model
+Open the frontend and try:
 
 ```
-Secret Lifecycle:  Created (active) → Used (reads-1) → Exhausted / Expired / Revoked
-
-Policy Chain (every resolve):
-  ✓ Secret exists        ✓ Status == active     ✓ user_id match
-  ✓ session_id match     ✓ tenant_id match      ✓ tool in allowed_tools
-  ✓ destination match    ✓ Not expired           ✓ read_count < max_reads
-  → Any failure: generic "Secret resolution denied" (no info leak)
+连接 postgresql://admin:MyPass123@db.prod/app，列出所有表
+帮我部署 nginx：安装、启动、验证 80 端口在监听
+把 staging 库删了：psql ... -c 'DROP DATABASE staging'    # → pauses for approval
 ```
 
-### Log Redaction
-
-- Fields matching `value|password|secret|token|api_key|authorization|cookie` → `[REDACTED]`
-- Secret refs → `sec_live_abcd****`
-- `POST /api/secrets` body never logged
-- Exception traces never dump request bodies
+> **CLI**: `python -m blindvault_agent.cli` runs the same agent in a terminal.
 
 ## Tech Stack
 
 | Layer | Tech |
 |-------|------|
-| Backend | FastAPI + LangGraph + asyncpg + redis-py |
-| Frontend | React 18 + TypeScript + Vite |
-| Encryption | AES-256-GCM (cryptography) |
-| Storage | Redis (secrets) + PostgreSQL (config) |
-| LLM | Any OpenAI-compatible API |
+| Agent runtime | LangChain `create_agent` + LangGraph (durable checkpointer) |
+| Security | Custom `AgentMiddleware` (reversible sanitize + PII backstop) + HITL middleware |
+| Model access | Your LiteLLM gateway (`/v1/chat/completions`), any model |
+| Encryption | AES-256-GCM (`cryptography`) |
+| Vault / state | Redis Stack (secrets vault + LangGraph checkpointer) |
+| API / Web | FastAPI (SSE streaming) + React 18 + TypeScript + Vite |
 
 ## Project Structure
 
 ```
-backend/
-├── main.py                # FastAPI entry point
-├── config.py              # Environment configuration
-├── crypto.py              # AES-256-GCM encrypt/decrypt
-├── models.py              # Pydantic data models
-├── sanitizer.py           # Auto-detect & replace secrets in messages
-├── redis_store.py         # Redis secret storage
-├── policy.py              # Permission validation engine
-├── redaction.py           # Log redaction middleware
-├── db.py                  # PostgreSQL persistence
-├── api/
-│   ├── secrets.py         # Secret CRUD API
-│   ├── agent.py           # Agent run API
-│   └── config.py          # LLM config API
-├── agent/
-│   └── graph.py           # LangGraph agent (mock + OpenAI)
+blindvault_agent/            # the security agent (current)
+├── agent.py                 # create_blindvault_agent() + BlindVaultAgent wrapper (entry sanitize + injection)
+├── web.py                   # FastAPI: /api/chat/stream (SSE), /api/approve
+├── cli.py                   # terminal entry + local executor
+├── config.py                # AgentSettings (gateway, model, redis, system prompt)
+├── middleware/
+│   ├── reversible_sanitize.py   # Interception A — primary (vault-backed)
+│   ├── pii_backstop.py          # Interception A — backstop (block mode, Shannon entropy)
+│   ├── hitl.py                  # Interception B — high-risk approval
+│   └── msg_utils.py             # scan str/list/tool_call content
 ├── tools/
-│   ├── registry.py        # Tool registry + denylist
-│   ├── executor.py        # SecureToolNode
-│   ├── secure_shell.py    # Universal secure shell tool
-│   └── browser_login_mock.py
-└── tests/
+│   ├── secure_shell.py          # Interception B — resolve & inject at execution
+│   └── planning.py              # record_plan (task breakdown)
+├── security/                # reused, unchanged core
+│   ├── crypto.py                # AES-256-GCM
+│   ├── policy.py                # resolve_secret — 9-step policy chain
+│   ├── redis_store.py           # secret vault
+│   └── models.py
+└── tests/                   # policy / sanitize / PII / shell / HITL / e2e
 
-frontend/
-├── src/
-│   ├── App.tsx             # Main app with session management
-│   ├── api.ts              # Backend API client
-│   ├── i18n.tsx            # Internationalization (en/zh)
-│   └── components/
-│       ├── Chat.tsx        # AI chat with sanitized history
-│       ├── Dashboard.tsx   # Credential vault overview
-│       ├── Sidebar.tsx     # Navigation + Enterprise features
-│       ├── Header.tsx      # Language toggle + user menu
-│       ├── AgentConfig.tsx # LLM configuration
-│       ├── ExecutionTrace.tsx
-│       └── AddCredentialModal.tsx
+frontend/                    # React UI (Chat adapted to the agent; older tabs marked legacy)
+├── src/agentApi.ts          # SSE client for /api/chat/stream
+└── src/components/Chat.tsx   # execution timeline: plan / tools / retry / approval / [REDACTED]
+
+backend/                     # legacy (pre-pivot self-built agent) — kept for reference
 ```
+
+> **Note:** `backend/` is the pre-pivot implementation, kept for reference. The current product lives in `blindvault_agent/`. Some older frontend tabs (Dashboard / RulesConfig / …) are marked *(legacy)* and not wired to the new agent.
+
+## Roadmap
+
+- LiteLLM gateway-level guardrail as an independent network backstop (defense in depth beyond the in-app middleware).
+- SSO / RBAC / audit export / multi-model routing policy.
 
 ## License
 
-**Community Edition** is licensed under [AGPL-3.0](LICENSE).
-
-**Enterprise Edition** is available under a commercial license. [Contact us](mailto:enterprise@blindvault.dev) for details.
+Licensed under [AGPL-3.0](LICENSE).
 
 ---
 
 <div align="center">
-  <sub>Built with 🔐 by the BlindVault Team</sub>
+  <sub>Built with 🔐 — AI Sees Nothing. Ops Lose Nothing.</sub>
 </div>
