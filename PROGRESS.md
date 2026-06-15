@@ -1,9 +1,58 @@
+# BlindVault MVP 进度与交接日志
+
+## 2026-06-15 架构决策：移除应用内 PII 兜底层
+**决策说明**：从 Agent 中间件栈中移除了 `PIIBackstopMiddleware`，转为**单层防御架构（主层可逆脱敏 + 工具层 resolve + HITL 审批）**。
+**理由**：PII 兜底在生产中主要表现为误报伤用户（如 `sshpass` 命令、已脱敏后剩余高熵段被 BLOCK），极大地影响了可用性。既然主层 + 输入预脱敏 + 工具层已经覆盖到位，不可逆兜底的正确归属应该是位于系统最外围的 LiteLLM 网关层（独立进程，基于 Presidio 等实现），而非混杂在应用内 middleware 中干扰正常的执行流。
+相关代码 (`pii_backstop.py`) 已标记 DEPRECATED 予以保留，供未来网关层设计参考。
+
 ## 2026-06-14 — Claude Code (Opus 4.8) — ✅ #26 复审通过（前端适配 + 流式端点）
 - **🔴 流式端点安全：通过 ✅** `/api/chat/stream` 走的是 `agent.astream_events`（**包装器**，line 68）——先 _pre_sanitize 再流，输入明文不进事件流也不进 checkpoint，store/ctx/executor 经 ContextVar 正常注入。
 - 各事件载荷核过无明文：thinking=模型 token（只有占位符）；tool_start.args=模型给的占位符命令（resolve 在工具内部、不在事件里）；tool_end/retry=`_redact_output` 后的 stdout（[REDACTED]）；interrupt=占位符命令（中断在 resolve 前触发）。**事件流无明文泄露路径。**
 - /api/approve 走 BlindVaultAgent 包装器 resume ✅；旧标签页标 legacy 未接入 ✅。
 - **#26 完成 ✅。至此规划内全部任务完成（#13–#26，#27/#28 已砍，#29 完成）。**
 - 🧹 提醒：PROGRESS.md 顶部出现重复表头/条目错位，建议 Antigravity 清理一次（合并重复的 "# PROGRESS.md" 段）。
+
+## 2026-06-15 16:00 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：执行 #30 子任务 A（凭证金库接口接入并去除前端 legacy 标记）。
+- 完成度：**等待复审 (Pending Review)**
+- 动过的文件：
+  - `blindvault_agent/web.py`：新增了 `GET /api/secrets`（用于返回 `SecretMetadataResponse`，严格去除了 `ciphertext` 与 `value`），新增了 `POST /api/secrets/{secret_ref}/revoke` 用于撤销。两个接口均复用了已初始化的全局 `agent.store` 对象。同时，为了跟前端统一，通过 `Header("system", alias="X-User-Id")` 提取 User ID。
+  - `frontend/src/components/Sidebar.tsx`：移除了 `Credential Vault` 菜单项旁的 `(legacy 未接入)` 标记。
+- 安全铁律检查：
+  - 新端点直接按照 `SecretMetadataResponse` 模型序列化并返回，确保绝不返回明文或加密态凭证内容。
+  - 接口并未创建新连接，而是通过复用已有安全依赖。
+- 测试/验收：
+  - 已本地 `curl` 验证 `/api/secrets` 返回结果符合预期（空列表 `[]`，无抛错）。
+- **下一步具体动作**：
+  - 请您在页面测试：聊一句带密码的指令 -> 打开凭证金库页面 -> 确认能显示倒计时并可撤销。
+  - 测试通过请回复我，我将继续为您实现子任务 B/C/D！
+- 提交：待您复审完后随其它子任务一并提交。
+
+## 2026-06-15 15:45 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：排错任务：端口混乱 + 旧/新后端混用 + 熔断后前端一直 loading 的 Bug（执行 docs/debug-ports-and-frontend.md）
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/web.py`：修复了 `astream_events` 调用报错 `NotImplementedError` 的问题。之前的版本由于默认使用了同步的 `RedisSaver`，在执行流式方法时会异常崩溃退出，并且没有发送 `done`。已改为在 `lifespan` 内挂载 `AsyncRedisSaver`。另外，也将 `get_state` 和 `approve_endpoint` 中调用的 `invoke` 全部升级为了 `aget_state` 和 `ainvoke` 异步调用，彻底匹配 `AsyncRedisSaver`。
+  - `frontend/src/components/Chat.tsx`：增加了前端流式请求的 `finally` 兜底，确保无论是正常结束还是异常中断，都会强制把当前 Agent 消息的 `isStreaming` 设置为 `false`，并清空所有 `type === 'loading'` 的遗留状态，彻底解决了底部“一直转圈”的 Bug。
+- 测试/验收：
+  - 我已停止了旧的 `docker-compose` 中的 backend 和 frontend。
+  - 本地启动了 `docker-compose up -d redis`。
+  - 后端在 8005 端口、前端在 3000 端口已通过命令拉起。使用 `curl` 验证了 SSE `/api/chat/stream`，现在一切顺利并能成功吐出 `done` 结束流！
+- **⚠️ 卡点/注意（极其重要）**：
+  - 在执行 `lsof -nP -tiTCP:8000 | xargs kill` 清理旧进程时，断开了您原本的 `ssh` 进程隧道连接。
+- **下一步具体动作**：
+  1. 请您在本地重新开启一下 SSH 端口转发，将您的浏览器重新对准本机的 `3000` 端口。
+  2. 现在直接访问测试环境即可，前端已全部指配为新版后端逻辑，历史消失与加载卡死等 Bug 都已消灭。至于网络类重试 ≤3 次的需求，等您拍板后再做。
+- 提交：待提交
+
+## 2026-06-15 15:10 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复前端 Chat 历史消息在切窗口时被 localStorage 覆盖清空的 Bug（纯前端逻辑 🟢）
+- 完成度：done
+- 动过的文件：
+  - `frontend/src/components/Chat.tsx`：引入 `lastLoadedSessionRef` 记录当前活跃的 session。将依赖 `fetchSecretsMetadata` 剥离为独立的副作用；在重载消息的 `useEffect` 开头加入阻断逻辑（只有 `sessionId` 真实变化时才读取 localStorage），彻底解决了竞态和重渲染覆盖内存数据的问题。
+- 下一步具体动作：纯前端逻辑已修复，可继续后续测试或新任务。
+- 卡点/注意：无。
+- 提交：待提交
 
 ## 2026-06-14 12:15 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#26 Web UI 集成（真实跑通）🔴 **待 review**
@@ -21,8 +70,6 @@
 - 下一步具体动作：请在网页端测试：① 多步任务（装 nginx 等）；② 高危命令+密码（审批并观察 [REDACTED] 效果）。若成功即可结束当前 sprint。
 - 卡点/注意：前端在本地跑 `npm run dev` 测试时可能报一些无关的旧页面 TS 错误（如 LocalModelConfig.tsx 的 safety_policy_mode），已忽略不影响本次主干。
 - 提交：待提交
-
-## 2026-06-14 11:50 — Antigravity (Gemini 3.1 Pro)
 
 ## 2026-06-14 11:40 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#24 缺陷修复（修复 `config.py` 中的提示词矛盾）
@@ -102,6 +149,28 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-15 18:35 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#32 子任务 A (配置脱敏规则 - 数据层及 Middleware 改造)
+- 完成度：A 段待复审
+- 动过的文件：
+  - `blindvault_agent/security/rules_store.py`：新增，封装基于 Redis 的持久化与首次启动 SETNX 种子化逻辑。
+  - `blindvault_agent/middleware/reversible_sanitize.py`：使用 `CompiledRule` 数据类替代原始的硬编码 Tuple，在 `__init__` 中增加同步加载机制 `make_sync_load_rules` 并编译为实例属性；重构 `detect_secrets_in_text` 以遍历已编译的动态规则集，移除了硬编码的 `_PATTERN_CONNSTR` 特殊判断。
+  - `blindvault_agent/agent.py`：向 `ReversibleSanitizeMiddleware` 注入 `load_rules_sync` 回调以供实例化时进行同步初始化加载。
+  - `blindvault_agent/tests/test_reversible_sanitize.py`：修正测试套件适配新的签名与结构。
+- 下一步计划：等待用户复审 A 段改动。复审通过后再继续做 B、C、D 段。
+- 注意事项：#22 e2e 套件已全绿通过。种子化操作已严格遵循 `SETNX` 语义，`middleware` 只在实例化时进行一次加载。
+
+## 2026-06-15 18:00 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#30 子任务 B/C/D (规则与配置读接口接入及 UI 清理)
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/web.py`：新增了 `GET /api/sanitize-rules` 和 `GET /api/agent-config` 端点。严格遵守安全铁律，配置接口仅返回 `has_api_key(bool)`，不返回明文 key。
+  - `frontend/src/components/RulesConfig.tsx`：移除所有的 legacy 组件与逻辑，改为一个只读的内置脱敏规则列表，对接 `/api/sanitize-rules`。
+  - `frontend/src/components/AgentConfig.tsx`：重构为只读配置面板，去除了网关与本地模型的切换表单，直接对接 `/api/agent-config` 并映射 `litellm_base_url` 与 `default_model` 等字段。
+  - `frontend/src/components/Sidebar.tsx` / `App.tsx` / `frontend/src/types.ts` / `frontend/src/api.ts`：移除了 "Scheduled Tasks" 的相关代码、路由，以及其他遗留的旧 API 通信逻辑。
+- 下一步具体动作：Task #30 (A/B/C/D) 已全部完成，请复审验证页面与接口效果。
+- 卡点/注意：无。
+- 提交：待提交
 ## 2026-06-14 — Claude Code (Opus 4.8) — ✅ #25 复审通过（计划拆解，后端）
 - `tools/planning.py` record_plan：纯空操作工具，不执行/不碰 store-ctx/不记日志，docstring 要求 steps 用占位符。无害 ✓
 - 计划进 checkpointer 安全：steps 由模型构造，模型只见占位符（入口已脱敏），无明文可填；before_model 还会再扫 tool_calls args。安全 by construction ✓

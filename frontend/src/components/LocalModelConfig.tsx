@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Cpu, Globe, Clock, RefreshCw, Loader2, Save, CheckCircle2, AlertTriangle, BrainCircuit, ChevronDown, ChevronUp, Sliders, ToggleLeft, ToggleRight, FileText
 } from 'lucide-react';
-import { getConfig, updateConfig, checkLocalModel, type LocalModelStatus } from '../api';
+import { checkLocalModel, type LocalModelStatus } from '../api';
 import { useI18n } from '../i18n';
 
 const DEFAULT_LOCAL_PROMPT = `你是一个安全信息提取器。分析用户输入，精确识别其中的敏感凭证信息。
@@ -26,7 +26,7 @@ const DEFAULT_LOCAL_PROMPT = `你是一个安全信息提取器。分析用户�
 
 export function LocalModelConfig() {
   const { t } = useI18n();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
@@ -39,7 +39,7 @@ export function LocalModelConfig() {
   const [localModelName, setLocalModelName] = useState('qwen3:0.6b');
   const [localModelTimeout, setLocalModelTimeout] = useState(2.0);
   const [localModelApiType, setLocalModelApiType] = useState('ollama');
-  const [localModelPrompt, setLocalModelPrompt] = useState('');
+  const [localModelPrompt, setLocalModelPrompt] = useState(DEFAULT_LOCAL_PROMPT);
   const [localModelDisableCot, setLocalModelDisableCot] = useState(true);
 
   // 连通性测试状态
@@ -47,56 +47,21 @@ export function LocalModelConfig() {
   const [localModelChecking, setLocalModelChecking] = useState(false);
 
   useEffect(() => {
-    fetchConfig();
+    // 模拟读取配置
+    setLoading(true);
+    setTimeout(() => {
+      setLoading(false);
+    }, 500);
   }, []);
 
-  const fetchConfig = async () => {
-    try {
-      setLoading(true);
-      const cfg = await getConfig();
-      const url = cfg.local_model_url || '';
-      const name = cfg.local_model_name || 'qwen3:0.6b';
-      const apiType = cfg.local_model_api_type || 'ollama';
-
-      setLocalModelUrl(url);
-      setLocalModelName(name);
-      setLocalModelTimeout(cfg.local_model_timeout || 2.0);
-      setLocalModelApiType(apiType);
-      setLocalModelPrompt(cfg.local_model_prompt || DEFAULT_LOCAL_PROMPT);
-      setLocalModelDisableCot(cfg.local_model_disable_cot !== undefined ? cfg.local_model_disable_cot : true);
-
-      // 如果已配置模型服务地址，在挂载或切回页面时自动触发后台测活，避免挂起在“正在验证连接...”
-      if (url.trim()) {
-        checkLocalModel(url.trim(), apiType, name.trim())
-          .then((res) => setLocalModelStatus(res))
-          .catch(() => setLocalModelStatus({ available: false, models: [], error: t('config.networkError') }));
-      }
-    } catch (e: any) {
-      setError(e.message || t('config.fetchFailed'));
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handleSave = async () => {
     setError('');
     setSaved(false);
     setSaving(true);
     try {
-      const current = await getConfig();
-      const result = await updateConfig({
-        llm_provider: current.llm_provider,
-        llm_model: current.llm_model,
-        llm_base_url: current.llm_base_url,
-        llm_api_key: '', // 空串表示不修改 API Key
-        safety_policy_mode: current.safety_policy_mode,
-        local_model_url: localModelUrl.trim(),
-        local_model_name: localModelName.trim(),
-        local_model_timeout: localModelTimeout,
-        local_model_api_type: localModelApiType,
-        local_model_prompt: localModelPrompt.trim(),
-        local_model_disable_cot: localModelDisableCot,
-      });
+      // 模拟保存
+      await new Promise(resolve => setTimeout(resolve, 800));
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
 

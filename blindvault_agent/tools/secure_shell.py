@@ -149,6 +149,10 @@ async def _secure_shell_async(
 
     # 0. 验证并解析主 secret_ref (替换 $SECRET 占位符)
     if secret_ref:
+        # 兼容 LLM 可能直接传入整个占位符 {{secret:sec_live_xxx}}
+        if secret_ref.startswith("{{secret:") and secret_ref.endswith("}}"):
+            secret_ref = secret_ref[9:-2]
+
         if not re.match(r"^sec_(?:live|test)_[A-Za-z0-9_-]+$", secret_ref):
             return {
                 "status": "error",

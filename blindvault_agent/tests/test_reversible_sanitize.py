@@ -26,6 +26,26 @@ from blindvault_agent.middleware.reversible_sanitize import (
     ReversibleSanitizeMiddleware,
     detect_secrets_in_text,
 )
+from blindvault_agent.middleware.reversible_sanitize import _BUILTIN_RULES_DATA
+import re
+
+class MockRule:
+    def __init__(self, data):
+        self.name = data["name"]
+        self.pattern = data["pattern"]
+        self.secret_type = data["secret_type"]
+        self.label = data["label"]
+        self.capture_group = data["capture_group"]
+        self.enabled = data["enabled"]
+        self.is_builtin = data["is_builtin"]
+        self.compiled_pattern = re.compile(self.pattern, re.IGNORECASE)
+
+_TEST_RULES = [MockRule(d) for d in _BUILTIN_RULES_DATA]
+
+def mock_load_rules():
+    return _TEST_RULES
+
+
 
 # 固定测试密钥
 TEST_KEY_RAW = os.urandom(32)
@@ -78,6 +98,7 @@ def middleware(vault):
     return ReversibleSanitizeMiddleware(
         save_record=vault.save_record,
         encryption_key=TEST_KEY_RAW,
+        load_rules=mock_load_rules,
         user_id="test_user",
         session_id="test_session",
         tenant_id="default",
@@ -91,7 +112,7 @@ def middleware(vault):
 
 def test_detect_cn_password():
     """中文密码模式检测。"""
-    matches = detect_secrets_in_text("服务器密码是 MyP@ssw0rd123")
+    matches = detect_secrets_in_text("服务器密码是 MyP@ssw0rd123", _TEST_RULES)
     assert len(matches) == 1
     assert matches[0].value == "MyP@ssw0rd123"
     assert matches[0].secret_type == "password"
@@ -99,7 +120,7 @@ def test_detect_cn_password():
 
 def test_detect_en_password():
     """英文密码模式检测。"""
-    matches = detect_secrets_in_text("password=SuperSecret!")
+    matches = detect_secrets_in_text("password=SuperSecret!", _TEST_RULES)
     assert len(matches) == 1
     assert matches[0].value == "SuperSecret!"
     assert matches[0].secret_type == "password"
@@ -107,7 +128,7 @@ def test_detect_en_password():
 
 def test_detect_connstr_password():
     """连接串密码检测。"""
-    matches = detect_secrets_in_text("连接 mysql://root:s3cretPass@db:3306/mydb")
+    matches = detect_secrets_in_text("连接 mysql://root:s3cretPass@db:3306/mydb", _TEST_RULES)
     assert len(matches) == 1
     assert matches[0].value == "s3cretPass"
     assert matches[0].secret_type == "password"
@@ -117,7 +138,7 @@ def test_detect_connstr_password():
 def test_detect_multiple_secrets():
     """同时检测多种凭证。"""
     text = "密码是 abc123，连接串是 postgresql://user:dbpass@host:5432/db"
-    matches = detect_secrets_in_text(text)
+    matches = detect_secrets_in_text(text, _TEST_RULES)
     assert len(matches) == 2
     values = {m.value for m in matches}
     assert "abc123" in values
@@ -126,31 +147,31 @@ def test_detect_multiple_secrets():
 
 def test_detect_skip_placeholders():
     """已有占位符不应被检测。"""
-    matches = detect_secrets_in_text("密码是 {{secret:sec_live_abc123}}")
+    matches = detect_secrets_in_text("密码是 {{secret:sec_live_abc123}}", _TEST_RULES)
     assert len(matches) == 0
 
 
 def test_detect_skip_secret_refs():
     """已有 secret_ref 不应被检测。"""
-    matches = detect_secrets_in_text("密码是 sec_live_abc123def456")
+    matches = detect_secrets_in_text("密码是 sec_live_abc123def456", _TEST_RULES)
     assert len(matches) == 0
 
 
 def test_detect_skip_query_words():
     """问询词不应被当作密码。"""
-    matches = detect_secrets_in_text("密码是什么")
+    matches = detect_secrets_in_text("密码是什么", _TEST_RULES)
     assert len(matches) == 0
 
 
 def test_detect_no_secrets():
     """无敏感信息应返回空列表。"""
-    matches = detect_secrets_in_text("你好，请帮我查看服务器状态")
+    matches = detect_secrets_in_text("你好，请帮我查看服务器状态", _TEST_RULES)
     assert len(matches) == 0
 
 
 def test_detect_api_key():
     """API Key 模式检测。"""
-    matches = detect_secrets_in_text("api_key=sk_test_abcdefghijklmnopqrstuvwxyz")
+    matches = detect_secrets_in_text("api_key=sk_test_abcdefghijklmnopqrstuvwxyz", _TEST_RULES)
     assert len(matches) == 1
     assert matches[0].secret_type == "api_key"
 
@@ -158,7 +179,7 @@ def test_detect_api_key():
 def test_detect_ordered_back_to_front():
     """匹配结果应按位置从后向前排序。"""
     text = "密码是 first，password=second"
-    matches = detect_secrets_in_text(text)
+    matches = detect_secrets_in_text(text, _TEST_RULES)
     assert len(matches) == 2
     # 从后向前：second 在后面
     assert matches[0].value_start > matches[1].value_start
@@ -277,6 +298,7 @@ def test_middleware_vault_failure_blocks():
     mw = ReversibleSanitizeMiddleware(
         save_record=failing_save,
         encryption_key=TEST_KEY_RAW,
+        load_rules=mock_load_rules,
     )
 
     state = {"messages": [FakeMessage("密码是 ShouldFail123")]}

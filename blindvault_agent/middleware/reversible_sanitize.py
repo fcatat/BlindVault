@@ -21,7 +21,7 @@ import re
 import secrets as secrets_mod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, Callable
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 
@@ -48,48 +48,62 @@ class SensitiveMatch:
 
 
 # ============================================================
-# 内置正则规则（确定性识别，成本为零，放最前面）
+# 数据结构
 # ============================================================
 
-# 中文上下文密码检测
-_PATTERN_CN_PASSWORD = re.compile(
-    r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|'
-    r'(?:设置|改|设|修改|更改|改成|设成)(?:为|成)\s*|\s+)'
-    r'([^\s,，。；;、\n\r]+)',
-    re.IGNORECASE,
-)
+@dataclass
+class CompiledRule:
+    name: str
+    secret_type: str
+    label: str
+    capture_group: int
+    enabled: bool
+    compiled_pattern: re.Pattern
 
-# 英文上下文密码检测
-_PATTERN_EN_PASSWORD = re.compile(
-    r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+is\s+|\s+)'
-    r'([^\s,，。；;、\n\r]+)',
-    re.IGNORECASE,
-)
 
-# 连接串密码检测（postgresql://user:PASSWORD@host）
-_PATTERN_CONNSTR = re.compile(
-    r'((?:postgresql|postgres|mysql|redis|mongodb|amqp|mqtt)://'
-    r'[^:@\s]*:)'           # scheme://user:
-    r'([^@\s]+)'            # PASSWORD
-    r'(@[^\s,，。；;、]+)',   # @host/db...
-)
+# ============================================================
+# 内置正则规则（数据源）
+# ============================================================
 
-# API Key / Token 检测（常见前缀格式）
-_PATTERN_API_KEY = re.compile(
-    r'(?:api[_-]?key|token|secret[_-]?key|access[_-]?key)'
-    r'(?:\s*[:=]\s*|\s+is\s+|\s+)'
-    r'([A-Za-z0-9_\-\.]{20,})',
-    re.IGNORECASE,
-)
-
-# 所有内置规则列表：(compiled_pattern, secret_type, label_prefix, capture_group)
-# capture_group=0 表示整个匹配，>0 表示指定捕获组
-_BUILTIN_RULES: list[tuple[re.Pattern, str, str, int]] = [
-    (_PATTERN_CN_PASSWORD, "password", "auto_cn_password", 1),
-    (_PATTERN_EN_PASSWORD, "password", "auto_en_password", 1),
-    (_PATTERN_API_KEY, "api_key", "auto_api_key", 1),
-    # 连接串单独处理（需要特殊替换逻辑）
+_BUILTIN_RULES_DATA = [
+    {
+        "name": "中文上下文密码",
+        "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|(?:设置|改|设|修改|更改|改成|设成)(?:为|成)\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "secret_type": "password",
+        "label": "auto_cn_password",
+        "capture_group": 1,
+        "enabled": True,
+        "is_builtin": True,
+    },
+    {
+        "name": "英文上下文密码",
+        "pattern": r'(?:password|passwd|pwd)(?:\s*[:=]\s*|\s+is\s+|\s+)([^\s,，。；;、\n\r]+)',
+        "secret_type": "password",
+        "label": "auto_en_password",
+        "capture_group": 1,
+        "enabled": True,
+        "is_builtin": True,
+    },
+    {
+        "name": "连接串密码",
+        "pattern": r'((?:postgresql|postgres|mysql|redis|mongodb|amqp|mqtt)://[^:@\s]*:)([^@\s]+)(@[^\s,，。；;、]+)',
+        "secret_type": "password",
+        "label": "auto_connstr_password",
+        "capture_group": 2,
+        "enabled": True,
+        "is_builtin": True,
+    },
+    {
+        "name": "API Key",
+        "pattern": r'(?:api[_-]?key|token|secret[_-]?key|access[_-]?key)(?:\s*[:=]\s*|\s+is\s+|\s+)([A-Za-z0-9_\-\.]{20,})',
+        "secret_type": "api_key",
+        "label": "auto_api_key",
+        "capture_group": 1,
+        "enabled": True,
+        "is_builtin": True,
+    }
 ]
+
 
 # 应跳过的常见问询词
 _SKIP_WORDS = frozenset({
@@ -103,7 +117,12 @@ _SKIP_WORDS = frozenset({
 # ============================================================
 
 
-def detect_secrets_in_text(text: str) -> list[SensitiveMatch]:
+# ============================================================
+# 脱敏检测与替换核心逻辑
+# ============================================================
+
+
+def detect_secrets_in_text(text: str, compiled_rules: list[CompiledRule]) -> list[SensitiveMatch]:
     """
     从文本中检测敏感信息。纯确定性正则，无 I/O。
 
@@ -112,8 +131,12 @@ def detect_secrets_in_text(text: str) -> list[SensitiveMatch]:
     matches: list[SensitiveMatch] = []
     seen_values: set[str] = set()
 
-    # ---- 第一层：内置正则规则 ----
-    for pattern, secret_type, label, group_idx in _BUILTIN_RULES:
+    # ---- 正则规则匹配 ----
+    for rule in compiled_rules:
+        if not rule.enabled:
+            continue
+        pattern = rule.compiled_pattern
+        group_idx = rule.capture_group
         for m in pattern.finditer(text):
             try:
                 value = m.group(group_idx).strip()
@@ -125,9 +148,9 @@ def detect_secrets_in_text(text: str) -> list[SensitiveMatch]:
                 val_end = m.end(0)
 
             # 过滤：太短、已是占位符、问询词、重复
-            if len(value) < 3:
+            if len(value) < 2:
                 continue
-            if value.startswith("{{secret:") or value.startswith("sec_live_"):
+            if value.startswith("{{secret:") or value.startswith("sec_live_") or value.startswith("sec_test_"):
                 continue
             if value == "[REDACTED]" or value == "$SECRET":
                 continue
@@ -138,30 +161,12 @@ def detect_secrets_in_text(text: str) -> list[SensitiveMatch]:
             seen_values.add(value)
 
             matches.append(SensitiveMatch(
-                secret_type=secret_type,
-                label=label,
+                secret_type=rule.secret_type,
+                label=rule.label,
                 value=value,
                 value_start=val_start,
                 value_end=val_end,
             ))
-
-    # ---- 第二层：连接串密码检测 ----
-    for m in _PATTERN_CONNSTR.finditer(text):
-        password = m.group(2)
-        if len(password) < 2 or password in seen_values:
-            continue
-        if password.startswith("{{secret:") or password.startswith("sec_live_") or password.startswith("sec_test_"):
-            continue
-        if password == "[REDACTED]" or password == "$SECRET":
-            continue
-        seen_values.add(password)
-        matches.append(SensitiveMatch(
-            secret_type="password",
-            label="auto_connstr_password",
-            value=password,
-            value_start=m.start(2),
-            value_end=m.end(2),
-        ))
 
     # 从后向前排序
     matches.sort(key=lambda x: x.value_start, reverse=True)
@@ -201,6 +206,7 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
         self,
         save_record,  # Callable[[SecretRecord], None] — 同步金库写入回调
         encryption_key: bytes,
+        load_rules: callable = None,
         user_id: str = "system",
         session_id: str = "",
         tenant_id: str = "default",
@@ -217,6 +223,23 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
         self._ttl_seconds = ttl_seconds
         self._max_reads = max_reads
         self._sanitize_count = 0  # 统计计数（不含敏感数据）
+        
+        # 加载并编译规则
+        raw_rules = load_rules() if load_rules else []
+        self.compiled_rules: list[CompiledRule] = []
+        for r in raw_rules:
+            try:
+                pat = re.compile(r.pattern, re.IGNORECASE)
+                self.compiled_rules.append(CompiledRule(
+                    name=r.name,
+                    secret_type=r.secret_type,
+                    label=r.label,
+                    capture_group=r.capture_group,
+                    enabled=r.enabled,
+                    compiled_pattern=pat
+                ))
+            except Exception as e:
+                logger.error("规则 %s 编译失败: %s", getattr(r, "name", "unknown"), e)
 
     def before_model(self, state: AgentState, runtime=None):
         """
@@ -246,7 +269,7 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
             # 合并扫描所有文本块
             all_matches = []
             for text in texts:
-                all_matches.extend(detect_secrets_in_text(text))
+                all_matches.extend(detect_secrets_in_text(text, self.compiled_rules))
 
             if not all_matches:
                 new_messages.append(msg)
@@ -385,4 +408,58 @@ def make_sync_save_record(store: SecretStore) -> callable:
                 _save_in_new_loop_real()
 
     return save_record_sync
+
+def make_sync_load_rules(redis_client, key_prefix="") -> callable:
+    """
+    工厂函数：包装 RulesStore.list_rules 为同步回调，并自动执行 seed。
+    """
+    import asyncio
+    import concurrent.futures
+    from blindvault_agent.security.rules_store import RulesStore
+    
+    is_fake = "Fake" in type(redis_client).__name__
+    
+    def load_rules_sync() -> list:
+        def _load_in_new_loop_real():
+            from redis.asyncio import Redis as AsyncRedis
+            conn_pool = redis_client.connection_pool
+            host = conn_pool.connection_kwargs.get("host", "localhost")
+            port = conn_pool.connection_kwargs.get("port", 6379)
+            db = conn_pool.connection_kwargs.get("db", 0)
+            redis_url = f"redis://{host}:{port}/{db}"
+            
+            async def _task():
+                temp_client = AsyncRedis.from_url(redis_url, decode_responses=True)
+                temp_store = RulesStore(temp_client, key_prefix=key_prefix)
+                try:
+                    await temp_store.seed_builtin_rules_if_needed(_BUILTIN_RULES_DATA)
+                    return await temp_store.list_rules()
+                finally:
+                    await temp_client.aclose()
+            return asyncio.run(_task())
+            
+        def _load_in_new_loop_fake():
+            temp_store = RulesStore(redis_client, key_prefix=key_prefix)
+            async def _task():
+                await temp_store.seed_builtin_rules_if_needed(_BUILTIN_RULES_DATA)
+                return await temp_store.list_rules()
+            return asyncio.run(_task())
+            
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+            
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fn = _load_in_new_loop_fake if is_fake else _load_in_new_loop_real
+                future = pool.submit(fn)
+                return future.result(timeout=10)
+        else:
+            if is_fake:
+                return _load_in_new_loop_fake()
+            else:
+                return _load_in_new_loop_real()
+                
+    return load_rules_sync
 

@@ -1,4 +1,6 @@
 """
+DEPRECATED — 默认不挂载，详见 PROGRESS.md 2026-06-14 决策
+
 BlindVault PII 兜底 Middleware（拦截点 A 兜底层）
 
 🔴 安全关键代码 —— 必须人工/强模型 review
@@ -67,8 +69,9 @@ _PATTERN_PRIVATE_KEY = re.compile(
 )
 
 # password= 后面跟的看起来像密码的值（比主层更宽松）
+# 避免匹配到 sshpass: not found，要求前面不是 ssh
 _PATTERN_PASSWORD_LOOSE = re.compile(
-    r'(?:password|passwd|pwd|pass|secret|credential|token)'
+    r'(?<!ssh)(?:password|passwd|pwd|pass|secret|credential|token)'
     r'\s*[=:]\s*'
     r'[^\s,，。；;]{3,}',
     re.IGNORECASE,
@@ -125,13 +128,15 @@ _PATTERN_LONG_TOKEN = re.compile(r'[A-Za-z0-9_\-\.+/=]{20,}')
 # 熵阈值：4.0 bits/char（自然英文约 1.5-3.5，随机密钥约 4.5-6.0）
 _ENTROPY_THRESHOLD = 4.0
 
-# 常见非密钥的长字符串白名单模式
 _ENTROPY_WHITELIST = re.compile(
     r'^(?:'
     r'sec_(?:live|test)_'      # 我们自己的 secret_ref
     r'|https?://'               # URL
     r'|[a-f0-9]{32,}$'         # 纯 hex hash（md5/sha 等，通常不是密钥）
+    r'|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}'  # UUID
     r'|[A-Za-z]+(?:_[A-Za-z]+){4,}'  # snake_case 变量名（如 my_very_long_variable_name）
+    r'|[a-z0-9]+(?:-[a-z0-9]+){3,}'  # kebab-case 变量名
+    r'|[A-Za-z0-9_\-\.]+\.(?:service|timer|target|mount|socket|path|log|conf|pid|sock|txt|csv|json)' # 系统文件/服务名
     r')',
     re.IGNORECASE,
 )
@@ -166,6 +171,7 @@ def _detect_high_entropy_strings(text: str) -> bool:
         # 计算熵
         entropy = _shannon_entropy(token)
         if entropy >= _ENTROPY_THRESHOLD:
+            logger.warning(f"PII 高熵检测命中: token='{token}', entropy={entropy:.2f}")
             return True
     return False
 

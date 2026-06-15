@@ -20,7 +20,6 @@ from blindvault_agent.config import AgentSettings, get_agent_settings
 from blindvault_agent.security.models import ExecutionContext
 from blindvault_agent.security.redis_store import SecretStore
 from blindvault_agent.middleware.reversible_sanitize import ReversibleSanitizeMiddleware, make_sync_save_record
-from blindvault_agent.middleware.pii_backstop import PIIBackstopMiddleware
 from blindvault_agent.tools.secure_shell import secure_shell
 
 import contextvars
@@ -271,17 +270,20 @@ def create_blindvault_agent(
         store = SecretStore(redis_client)
 
     # 1. 实例化可逆脱敏与 PII 兜底中间件
+    from blindvault_agent.middleware.reversible_sanitize import make_sync_load_rules
     save_record_sync = make_sync_save_record(store)
+    load_rules_sync = make_sync_load_rules(store._redis, store._prefix)
+    
     from blindvault_agent.security.config import get_settings as get_security_settings
     security_settings = get_security_settings()
     sanitize_mw = ReversibleSanitizeMiddleware(
         save_record=save_record_sync,
         encryption_key=security_settings.encryption_key_bytes,
+        load_rules=load_rules_sync,
     )
-    pii_mw = PIIBackstopMiddleware()
 
-    # 2. 组装中间件顺序：[ReversibleSanitize, PIIBackstop]
-    active_middleware = [sanitize_mw, pii_mw]
+    # 2. 组装中间件顺序：[ReversibleSanitize]
+    active_middleware = [sanitize_mw]
     if middleware:
         active_middleware.extend(middleware)
 

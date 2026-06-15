@@ -7,7 +7,6 @@ import { Chat } from './components/Chat';
 import { RulesConfig } from './components/RulesConfig';
 import { AgentConfig } from './components/AgentConfig';
 import { LocalModelConfig } from './components/LocalModelConfig';
-import { ScheduledTasks } from './components/ScheduledTasks';
 import { EnterprisePlaceholder } from './components/EnterprisePlaceholder';
 import { AddCredentialModal } from './components/AddCredentialModal';
 import { ViewState } from './types';
@@ -150,7 +149,6 @@ export default function App() {
           )}
           {activeView === 'rules' && <RulesConfig />}
           {activeView === 'config' && <AgentConfig />}
-          {activeView === 'tasks' && <ScheduledTasks sessionId={activeSessionId} />}
 
 
           {/* 企业版独立路由页面 */}

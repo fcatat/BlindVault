@@ -1,5 +1,5 @@
 export type ViewState = 
-  | 'dashboard' | 'chat' | 'rules' | 'config' | 'tasks'
+  | 'dashboard' | 'chat' | 'rules' | 'config'
   | 'local_model' | 'sso' | 'audit' | 'multi_model' | 'policy' | 'hardware';
 
 

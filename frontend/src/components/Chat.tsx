@@ -160,8 +160,19 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     }
   }, [sessionId]);
 
+  const lastLoadedSessionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    fetchSecretsMetadata();
+  }, [fetchSecretsMetadata]);
+
   // 切换 session 时重置和加载对应的历史消息与选中的工具日志
   useEffect(() => {
+    if (lastLoadedSessionRef.current === sessionId) {
+      return;
+    }
+    lastLoadedSessionRef.current = sessionId;
+
     let loadedMessages: Message[] = [];
     try {
       const cached = localStorage.getItem(`bv_chat_${sessionId}`);
@@ -187,8 +198,6 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     setIsLoading(false);
     setLastUserMessage('');
 
-    fetchSecretsMetadata();
-
     try {
       const cachedTrace = localStorage.getItem(`bv_chat_active_trace_${sessionId}`);
       if (cachedTrace) {
@@ -204,7 +213,7 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     } catch (e) {
       setActiveTraceMsgId(null);
     }
-  }, [sessionId, fetchSecretsMetadata]);
+  }, [sessionId]);
 
   // 当 messages 改变时，同步到 localStorage (过滤掉 loading 临时消息)
   useEffect(() => {
@@ -467,6 +476,13 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
       }
       setIsLoading(false);
     } finally {
+      // 兜底：无论正常结束还是抛错，确保流状态为关闭，并清掉可能残留的纯 loading 占位
+      setMessages(prev => prev
+        .filter(m => m.type !== 'loading')
+        .map(m => 
+          m.id === agentMsgId && m.isStreaming ? { ...m, isStreaming: false } : m
+      ));
+      setIsLoading(false);
       abortControllerRef.current = null;
       inputRef.current?.focus();
     }

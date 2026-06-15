@@ -1,4 +1,6 @@
 """
+DEPRECATED — 默认不挂载，详见 PROGRESS.md 2026-06-14 决策
+
 测试：PII 兜底 Middleware（拦截点 A 兜底层）
 
 🔴 安全关键测试

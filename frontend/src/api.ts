@@ -233,64 +233,25 @@ export async function streamAgent(
 
 // ---- Config 类型 ----
 
-export interface LLMConfig {
-  llm_provider: string;
-  llm_model: string;
-  llm_base_url: string;
+export interface AgentConfigData {
+  litellm_base_url: string;
+  default_model: string;
   has_api_key: boolean;
   system_prompt: string;
-  // 企业版：本地模型网关
-  local_model_url: string;
-  local_model_name: string;
-  local_model_timeout: number;
-  local_model_api_type: string;
-  local_model_prompt: string;
-  local_model_disable_cot: boolean;
-  // 运行与安全决策
-  agent_max_retries: number;
-  agent_high_risk_commands: string;
-  agent_approval_required: boolean;
-}
-
-export interface LLMConfigUpdate {
-  llm_provider: string;
-  llm_model: string;
-  llm_base_url: string;
-  llm_api_key: string;
-  // 企业版：本地模型网关
-  local_model_url?: string;
-  local_model_name?: string;
-  local_model_timeout?: number;
-  local_model_api_type?: string;
-  local_model_prompt?: string;
-  local_model_disable_cot?: boolean;
-  // 运行与安全决策
-  agent_max_retries?: number;
-  agent_high_risk_commands?: string;
-  agent_approval_required?: boolean;
+  max_iterations: number;
 }
 
 // ---- Config API ----
 
-export async function getConfig(): Promise<LLMConfig> {
-  const res = await fetch(`${API_BASE}/config`, {
+export async function getAgentConfig(): Promise<AgentConfigData> {
+  const res = await fetch(`${API_BASE}/agent-config`, {
     headers: DEFAULT_HEADERS,
   });
   if (!res.ok) throw new Error(`获取配置失败: ${res.status}`);
   return res.json();
 }
 
-export async function updateConfig(payload: LLMConfigUpdate): Promise<LLMConfig> {
-  const res = await fetch(`${API_BASE}/config`, {
-    method: 'PUT',
-    headers: DEFAULT_HEADERS,
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    await throwError(res);
-  }
-  return res.json();
-}
+
 
 export interface ConnectionCheckResult {
   success: boolean;
