@@ -149,6 +149,15 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-15 18:45 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#32 子任务 C (AI 辅助生成 + 规则测试端点)
+- 完成度：C 段待复审
+- 动过的文件：
+  - `blindvault_agent/web.py`：新增了 `POST /api/sanitize-rules/ai-suggest` 和 `POST /api/sanitize-rules/test` 两个端点及对应的 Pydantic Request Models。
+- 实现红线：
+  1. `ai-suggest`：调用了 `ChatOpenAI` (复用了 `get_agent_settings`)，Prompt 要求仅输出严格 JSON 并包含了 `explanation` 字段，服务端使用 `re.compile` 校验，在 Response 加入 `"is_candidate": True`，**没有入库或直接更新 Redis**。
+  2. `test`：校验了 `pattern` 的 500 长度上限。使用了独立的 `ThreadPoolExecutor` 及 `asyncio.wait_for(timeout=0.1)` 保护 `finditer` 免受 ReDoS 攻击卡死主线程。提取 `matches` 并安全返回。**没有留存或写入 `test_text` 全文**日志。
+- 下一步计划：等待用户复审 C 段。复审通过后再继续做 D 段（前端对接）。
 ## 2026-06-15 18:40 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#32 子任务 B (添加配置规则的 CRUD API 端点)
 - 完成度：B 段待复审
