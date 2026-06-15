@@ -149,6 +149,18 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-15 18:40 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#32 子任务 B (添加配置规则的 CRUD API 端点)
+- 完成度：B 段待复审
+- 动过的文件：
+  - `blindvault_agent/web.py`：新增了 `GET /api/sanitize-rules`, `POST /api/sanitize-rules`, `PUT /api/sanitize-rules/{id}`, `DELETE /api/sanitize-rules/{id}`, `POST /api/sanitize-rules/restore-defaults` 五个端点。
+- 实现红线：
+  1. 所有写端点都进行了 `re.compile(pattern)` 校验，失败则返回 400 错误。
+  2. 加入了长度拦截：`len(req.pattern) > 500` 直接返回 400（防 ReDoS）。
+  3. 执行了 `logger.info` 级别脱敏审计：通过 SHA256 哈希旧/新 pattern 并记录操作行为（创建/更新/删除/恢复默认），确保规则模式原文不泄露。
+  4. 复用了 `get_rules_store()` 获取单例 `rules_store`，未新开 Redis 连接。
+- 注意事项：提醒用户：因 A 段设计决定，**规则改动不影响本轮已开始的会话，新规则仅对新建会话（即下次执行）生效**（后续 D 段会配合添加前端文案）。
+- 下一步计划：等待用户复审 B 段。复审通过后再继续做 C、D 段。
 ## 2026-06-15 18:35 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#32 子任务 A (配置脱敏规则 - 数据层及 Middleware 改造)
 - 完成度：A 段待复审

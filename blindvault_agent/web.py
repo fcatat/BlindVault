@@ -226,33 +226,149 @@ async def revoke_secret_endpoint(secret_ref: str):
 
 
 # ==========================================
-# 开源版功能页对接 - 子任务 B & C
+# 规则管理端点
 # ==========================================
+import re
+import hashlib
+from typing import Optional
+from datetime import datetime, timezone
+from uuid import uuid4
+from fastapi import HTTPException
+from pydantic import BaseModel
+
+from blindvault_agent.security.rules_store import get_rules_store, SanitizeRule
+from blindvault_agent.middleware.reversible_sanitize import _BUILTIN_RULES_DATA
+
+class RuleCreateRequest(BaseModel):
+    name: str
+    pattern: str
+    secret_type: str = "password"
+    label: str = "custom_rule"
+    capture_group: int = 1
+    enabled: bool = True
+
+class RuleUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    pattern: Optional[str] = None
+    secret_type: Optional[str] = None
+    label: Optional[str] = None
+    capture_group: Optional[int] = None
+    enabled: Optional[bool] = None
+
+def _hash_pattern(pattern: str) -> str:
+    if not pattern:
+        return "none"
+    return hashlib.sha256(pattern.encode()).hexdigest()[:8]
+
 @app.get("/api/sanitize-rules")
 async def list_sanitize_rules():
-    """返回内置可逆脱敏规则的只读描述"""
-    return [
-        {
-            "name": "中文上下文密码检测",
-            "description": "识别并保护中文语境下的密码或凭据（如：密码是 123456）",
-            "example": "密码是 my_secret_123"
-        },
-        {
-            "name": "英文上下文密码检测",
-            "description": "识别并保护英文语境下的密码或凭据（如：password is 123456）",
-            "example": "password is my_secret_123"
-        },
-        {
-            "name": "API Key / Token 检测",
-            "description": "识别各种 API Key、Token 及其相关变体",
-            "example": "api_key=sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-        },
-        {
-            "name": "连接串密码检测",
-            "description": "识别数据库或消息队列连接串中包含的密码",
-            "example": "postgresql://user:my_db_pass@localhost:5432"
-        }
-    ]
+    """获取所有脱敏规则"""
+    store = await get_rules_store()
+    rules = await store.list_rules()
+    # Sort by created_at desc or something, but we just return them
+    return rules
+
+@app.post("/api/sanitize-rules")
+async def create_sanitize_rule(req: RuleCreateRequest):
+    """创建新脱敏规则"""
+    if len(req.pattern) > 500:
+        raise HTTPException(status_code=400, detail="Pattern length exceeds 500 characters")
+    try:
+        re.compile(req.pattern)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+
+    store = await get_rules_store()
+    now = datetime.now(timezone.utc)
+    rule = SanitizeRule(
+        id=str(uuid4()),
+        name=req.name,
+        pattern=req.pattern,
+        secret_type=req.secret_type,
+        label=req.label,
+        capture_group=req.capture_group,
+        enabled=req.enabled,
+        is_builtin=False,
+        created_at=now,
+        updated_at=now
+    )
+    await store.save_rule(rule)
+    
+    logger.info("审计 - [创建规则] ID=%s name=%s pattern_hash=%s", rule.id, rule.name, _hash_pattern(rule.pattern))
+    return rule
+
+@app.put("/api/sanitize-rules/{rule_id}")
+async def update_sanitize_rule(rule_id: str, req: RuleUpdateRequest):
+    """更新脱敏规则"""
+    store = await get_rules_store()
+    rule = await store.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    old_pattern_hash = _hash_pattern(rule.pattern)
+
+    if req.name is not None:
+        rule.name = req.name
+    if req.pattern is not None:
+        if len(req.pattern) > 500:
+            raise HTTPException(status_code=400, detail="Pattern length exceeds 500 characters")
+        try:
+            re.compile(req.pattern)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+        rule.pattern = req.pattern
+    if req.secret_type is not None:
+        rule.secret_type = req.secret_type
+    if req.label is not None:
+        rule.label = req.label
+    if req.capture_group is not None:
+        rule.capture_group = req.capture_group
+    if req.enabled is not None:
+        rule.enabled = req.enabled
+        
+    rule.updated_at = datetime.now(timezone.utc)
+    await store.save_rule(rule)
+    
+    new_pattern_hash = _hash_pattern(rule.pattern)
+    logger.info("审计 - [更新规则] ID=%s name=%s old_pattern_hash=%s new_pattern_hash=%s", rule.id, rule.name, old_pattern_hash, new_pattern_hash)
+    return rule
+
+@app.delete("/api/sanitize-rules/{rule_id}")
+async def delete_sanitize_rule(rule_id: str):
+    """删除脱敏规则"""
+    store = await get_rules_store()
+    rule = await store.get_rule(rule_id)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    pattern_hash = _hash_pattern(rule.pattern)
+    await store.delete_rule(rule_id)
+    logger.info("审计 - [删除规则] ID=%s name=%s pattern_hash=%s", rule.id, rule.name, pattern_hash)
+    return {"status": "success"}
+
+@app.post("/api/sanitize-rules/restore-defaults")
+async def restore_default_rules():
+    """恢复内置默认规则"""
+    store = await get_rules_store()
+    rules = await store.list_rules()
+    
+    existing_builtin_labels = {r.label for r in rules if r.is_builtin}
+    
+    now = datetime.now(timezone.utc)
+    restored_count = 0
+    for data in _BUILTIN_RULES_DATA:
+        if data["label"] not in existing_builtin_labels:
+            rule = SanitizeRule(
+                id=str(uuid4()),
+                created_at=now,
+                updated_at=now,
+                **data
+            )
+            await store.save_rule(rule)
+            restored_count += 1
+            logger.info("审计 - [恢复内置规则] ID=%s name=%s pattern_hash=%s", rule.id, rule.name, _hash_pattern(rule.pattern))
+            
+    return {"status": "success", "restored_count": restored_count}
 
 from blindvault_agent.config import get_agent_settings
 
