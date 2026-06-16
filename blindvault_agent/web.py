@@ -34,6 +34,9 @@ async def lifespan(app: FastAPI):
     from blindvault_agent.tools.sandbox_executor import make_sandbox_executor
     executor = make_sandbox_executor(settings.sandbox_url)
 
+    from blindvault_agent.security.pg_archive import init_archive_db
+    await init_archive_db(settings.database_url)
+
     async with AsyncRedisSaver.from_conn_string(settings.redis_url) as checkpointer:
         await checkpointer.setup()
         agent = create_blindvault_agent(
@@ -188,6 +191,8 @@ async def list_secrets_endpoint(x_user_id: str = Header("system")):
     # MVP 阶段：中间件固定使用了 "system" 作为 user_id 创建金库条目
     # 为了演示，强制查询 "system" 的秘密，无视 x_user_id
     records = await agent.store.list_secrets("system")
+    redis_refs = {r.secret_ref for r in records}
+
     result = []
     for r in records:
         reads_left = max(0, r.max_reads - r.read_count)
@@ -201,6 +206,39 @@ async def list_secrets_endpoint(x_user_id: str = Header("system")):
             reads_left=reads_left,
             status=r.status
         ))
+
+    try:
+        from blindvault_agent.security.pg_archive import list_archives
+        from blindvault_agent.security.models import SecretStatus, SecretType
+        archives = await list_archives("system")
+        for a in archives:
+            if a["secret_ref"] not in redis_refs:
+                status_str = a["status"]
+                if status_str == "active":
+                    status_str = "expired"
+                import json
+                try:
+                    allowed_tools = json.loads(a.get("allowed_tools", "[]"))
+                except:
+                    allowed_tools = []
+                try:
+                    allowed_destinations = json.loads(a.get("allowed_destinations", "[]"))
+                except:
+                    allowed_destinations = []
+                    
+                result.append(SecretMetadataResponse(
+                    secret_ref=a["secret_ref"],
+                    label=a["label"],
+                    secret_type=SecretType(a["secret_type"]),
+                    allowed_tools=allowed_tools,
+                    allowed_destinations=allowed_destinations,
+                    expires_at=a["expires_at"],
+                    reads_left=0,
+                    status=SecretStatus(status_str)
+                ))
+    except Exception as e:
+        logger.error(f"Failed to fetch archives: {e}")
+
     return result
 
 @app.post("/api/secrets/{secret_ref}/revoke")

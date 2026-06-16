@@ -64,6 +64,12 @@ class SecretStore:
         pipe.expireat(idx_key, expire_ts)
         await pipe.execute()
 
+        try:
+            from blindvault_agent.security.pg_archive import archive_secret
+            await archive_secret(record)
+        except Exception as e:
+            logger.error(f"PG 写入失败 (save_secret hook): {e}")
+
         logger.info("Secret 已保存: ref=%s (label=%s)", record.secret_ref[:12] + "****", record.label)
 
     async def get_secret(self, secret_ref: str) -> Optional[SecretRecord]:
@@ -95,6 +101,13 @@ class SecretStore:
         if not exists:
             return False
         await self._redis.hset(key, "status", SecretStatus.REVOKED.value)
+
+        try:
+            from blindvault_agent.security.pg_archive import update_archive_status
+            await update_archive_status(secret_ref, SecretStatus.REVOKED.value)
+        except Exception as e:
+            logger.error(f"PG 写入失败 (revoke_secret hook): {e}")
+
         logger.info("Secret 已撤销: ref=%s", secret_ref[:12] + "****")
         return True
 
@@ -102,6 +115,12 @@ class SecretStore:
         """更新 secret 状态。"""
         key = self._key(secret_ref)
         await self._redis.hset(key, "status", status.value)
+        
+        try:
+            from blindvault_agent.security.pg_archive import update_archive_status
+            await update_archive_status(secret_ref, status.value)
+        except Exception as e:
+            logger.error(f"PG 写入失败 (update_status hook): {e}")
 
     async def list_secrets(
         self, user_id: str

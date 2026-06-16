@@ -61,6 +61,10 @@ class AgentSettings(BaseSettings):
         default=15,
         description="Agent 最大循环次数",
     )
+    database_url: str = Field(
+        default="",
+        description="PostgreSQL 连接 URL。为空时不启用 PG 归档",
+    )
 
     # ---- 日志 ----
     log_level: str = Field(default="INFO", description="日志级别")
