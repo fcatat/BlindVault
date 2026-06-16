@@ -1,5 +1,52 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-16 17:21 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：执行 #40 任务 A 段：本地模型脱敏网关 EE 子目录建制
+- 完成度：done
+- 动过的文件：
+  - 新建 `blindvault_agent/ee/__init__.py`：实现 `is_ee`, `get_ee_features`, `require_ee` 及基础环境变量 license 门禁。
+  - 新建 `blindvault_agent/ee/license.py`：作为后续 RSA 签名的占位。
+  - 新建 `blindvault_agent/ee/local_model/client.py`：从旧仓完整移植并完善了 `extract_secrets`、`check_model_health` 等逻辑，保留了严格的防幻觉校验机制和静默降级逻辑。
+  - 新建 `blindvault_agent/ee/local_model/settings.py`：定义了 `LocalModelSettings`，提供默认超时和默认提示词等配置。
+  - 新建 `blindvault_agent/tests/test_ee_local_model.py`：编写了单元测试，覆盖了 EE 门禁检查、三协议解析、降级处理和幻觉过滤。
+- 验收结果：本地 `pytest` 测试全绿。无 License 时 `is_ee()` 返回 `False`。
+- 后续待办（交给下一任）：执行 #40 任务 B 段（将本地模型接入主层 `reversible_sanitize.py`、开发 Web API 及完善前端面板）。
+
+## 2026-06-16 16:55 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复授权执行完成后，前序的计划框未能打钩、且工具调用一直显示“正在执行”转圈状态的 UI 漏洞
+- 完成度：done
+- 动过的文件：
+  - `frontend/src/components/Chat.tsx`：
+    - 修复了一直转圈的问题：在挂起状态下（`!msg.isStreaming` 且 `!p.done`），将“正在执行（转圈）”的状态修改为显示“挂起等待授权（盾牌图标）”。
+    - 修复了计划无法打钩的问题：修改了 `handleApprove` 回调的逻辑。现在点击通过审核后，会自动查找前一个被中断的 Agent 计划框消息，并人为追加一个 `tool_end` 的流式完成事件。这样前序的消息就能顺利收到结束信号，触发 `doneCount` 更新，让工具列表和执行计划的状态变成绿色的 `✅` 成功勾选状态。
+- 提交：已修复并在后台执行了 `docker-compose build frontend` 应用最新镜像。
+
+## 2026-06-16 16:51 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复触发高危操作人工审批时，弹出的审批框会将之前生成的执行计划覆盖掉的 UI 漏洞
+- 完成度：done
+- 动过的文件：
+  - `frontend/src/components/Chat.tsx`：修改了 `streamAgent` SSE 事件处理逻辑。当接收到 `interrupt` 事件时，原本的逻辑是直接用 `filter` 将当前还在 Streaming 的 `agentMsg` 完全丢弃并替换成 `approvalMsg`。现已修复为：保留 `agentMsg`（将它的 `isStreaming` 设为 `false`）然后将 `approvalMsg` 追加到后面，从而让执行计划和审批框能正常上下排列显示。
+- 提交：已修复并在后台执行了 `docker-compose build frontend` 应用最新镜像。
+
+## 2026-06-16 16:45 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复删除容器操作未触发人工审批的漏洞
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/middleware/hitl.py`：修改了 `is_command_high_risk` 方法。之前该方法仅检查硬编码在代码中的少量正则匹配（如 `rm -rf /`, `mkfs`, `drop database` 等），完全无视了 `config.py` 中通过环境变量配置的 `agent_high_risk_commands` 列表。现已修复为：首先读取配置中长达二十多个的拦截词（包含 `docker rm`, `docker stop`, `systemctl stop` 等），通过带词边界的正则匹配检查执行语句。如果匹配则返回拦截描述，触发 LangGraph 的 `interrupt()` 审批。
+- 错误反思与更正：
+  - 代码在 `config.py` 中设计了良好的动态配置列表，但在 `hitl.py` 执行审批决策时却硬编码了一套阉割版的正则规则，导致 `docker rm` 漏网。这属于典型的配置与实现割裂。
+- 提交：已修复并在后台执行了 `docker-compose build backend` 应用最新镜像。
+
+## 2026-06-16 15:35 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：排查并修复凭据过期消失 Bug 与异常多出的凭证
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/middleware/reversible_sanitize.py`：修复了 `auto_cn_password` 的正则，将 `pass` 加上了词边界 `\bpass\b` 避免错误匹配 `sshpass`；修复了 `make_sync_save_record` 的并发问题，改用 `asyncio.run_coroutine_threadsafe` 将保存任务提交到主事件循环，彻底解决了因为创建新事件循环导致的 `asyncpg` 连接池崩溃 (`ConnectionDoesNotExistError` 和 `another operation is in progress`) 问题。
+- 错误反思与更正：
+  - **过期凭据消失**：因为上一位开发者在包装同步回调时错误使用了线程池 + `asyncio.run`，这创建了新的事件循环并尝试复用主循环中的 global `asyncpg.Pool`，导致 PG 写入静默失败。过期后的凭据从 Redis 消失且未写入 PG，导致前端查询不到。
+  - **凭据异常增多**：由于之前修改正则代码后**没有重新构建 `backend` 容器镜像**，旧版正则（无 `\b` 词边界）仍在运行。当大模型尝试执行 `sshpass -p '$SECRET' ... PreferredAuthentications=password` 时，旧正则错误地提取了 `-p` 和 `-o` 作为密码。这些生成的凭据 TTL 与合法凭据几乎完全一致（慢了几秒），让用户误以为是过期的旧凭据更新了。
+- 提交：已修复并在后台执行了 `docker-compose build backend` 应用最新镜像。
+
 ## 2026-06-16 14:10 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#36 凭证 PG 归档 (补充修复 read_count 字段漏洞及前端聊天 404 Bug)
 - 完成度：done
@@ -171,6 +218,25 @@
 ---
 
 ## 交接日志（最新在上）
+
+## 2026-06-16 14:50 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复“产生两个凭据”的重影 Bug
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/middleware/reversible_sanitize.py`：修复了导致 `sshpass -p` 误伤的正则表达式贪婪匹配。在 `pass` 和 `pwd` 两侧追加了词边界 `\b` 以防止错误提取 `-p` 这种字符并意外生成“假密码”。
+- 操作记录：
+  - 排查确认了 LangGraph 和 Agent 源码中提取密码逻辑的 Regex。
+  - 修改 Regex 并清空了 Redis 里的缓存规则 (`blindvault:sanitize_rules_seeded` 及规则数据)，随后重启 backend 以执行首次种子化，把新的带有 `\b` 边界的规则成功塞入。
+- 下一步具体动作：等待人工验收。
+
+## 2026-06-16 14:26 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：排查并修复 AI 网关配置丢失与沙箱状态 404 问题。
+- 完成度：done
+- 动过的文件：
+  - `docker-compose.yml`：移除了环境变量的强行覆盖，防止 `LLM_BASE_URL` 的空值覆盖掉 `AgentSettings` 的默认值（解决网关 URL 显示 Not Configured 以及 500 报错）。
+  - `blindvault_agent/web.py`：移植了缺失的 `/api/config/sandbox/status` 接口，修复了沙箱诊断面板的 404 Bug。
+- 下一步具体动作：网关配置已恢复，沙箱状态探测恢复正常，关于执行计划进度条的显示原理解释完毕。等待用户进行总体检查或指派新任务。
+- 提交：待提交
 
 ## 2026-06-16 11:15 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#35 接入真沙箱执行器

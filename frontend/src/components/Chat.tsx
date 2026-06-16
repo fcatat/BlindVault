@@ -396,10 +396,14 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
             pendingCommand: data.pending_command,
             triggeredRule: data.risk_description || '',
           };
-          setMessages(prev => [
-            ...prev.filter(m => m.id !== agentMsgId),
-            approvalMsg,
-          ]);
+          setMessages(prev => {
+            const updatedPrev = prev.map(m => 
+              m.id === agentMsgId 
+                ? { ...m, isStreaming: false } 
+                : m
+            );
+            return [...updatedPrev, approvalMsg];
+          });
           setIsLoading(false);
           break;
         }
@@ -495,13 +499,45 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
     setIsLoading(true);
     try {
       const data = await approveAgent(sessionId, 'approve');
-      const finalMsg: Message = {
-        id: Date.now() + 20,
-        type: 'agent',
-        text: data.reply || '',
-        toolCalls: data.tool_output ? [{ tool: 'secure_shell_result', args: { output: data.tool_output } }] : [],
-      };
-      setMessages(prev => [...prev, finalMsg]);
+      
+      setMessages(prev => {
+        const newMessages = [...prev];
+        // 找到在这次审批之前的最后一条 agent 消息（通常就是那个带着计划和悬挂的工具调用的消息）
+        let lastAgentIdx = -1;
+        for (let i = newMessages.length - 1; i >= 0; i--) {
+          if (newMessages[i].type === 'agent') {
+            lastAgentIdx = i;
+            break;
+          }
+        }
+        
+        if (lastAgentIdx !== -1) {
+          const agentMsg = { ...newMessages[lastAgentIdx] };
+          if (agentMsg.streamingSteps) {
+            // 找到最后一个 tool_start 并给它配对一个 tool_end
+            const lastToolStart = [...agentMsg.streamingSteps].reverse().find(s => s.type === 'tool_start');
+            if (lastToolStart) {
+              const toolEndStep: StreamingStep = {
+                type: 'tool_end',
+                tool: lastToolStart.tool,
+                result: { status: 'success', exit_code: 0, output: data.tool_output },
+                timestamp: Date.now()
+              };
+              agentMsg.streamingSteps = [...agentMsg.streamingSteps, toolEndStep];
+              newMessages[lastAgentIdx] = agentMsg;
+            }
+          }
+        }
+
+        const finalMsg: Message = {
+          id: Date.now() + 20,
+          type: 'agent',
+          text: data.reply || '',
+          toolCalls: data.tool_output ? [{ tool: 'secure_shell_result', args: { output: data.tool_output } }] : [],
+        };
+        
+        return [...newMessages, finalMsg];
+      });
     } catch (e: any) {
       showToast('审批执行失败: ' + e.message);
     } finally {
@@ -829,9 +865,13 @@ export function Chat({ sessionId, onFirstMessage }: ChatProps) {
                                   <summary className="flex items-center gap-2 text-[10px] cursor-pointer list-none select-none py-0.5 hover:bg-surface-container-low/50 rounded px-1 -mx-1 transition-colors">
                                     {!p.done ? (
                                       <>
-                                        <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
-                                        <span className="text-primary font-medium flex-1 min-w-0 truncate">
-                                          正在执行 <code className="bg-primary/10 px-1 py-0.5 rounded text-[9px]">{p.tool}</code>
+                                        {msg.isStreaming ? (
+                                          <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />
+                                        ) : (
+                                          <ShieldAlert className="w-3 h-3 text-amber-500 shrink-0" />
+                                        )}
+                                        <span className={`${msg.isStreaming ? 'text-primary' : 'text-amber-600'} font-medium flex-1 min-w-0 truncate`}>
+                                          {msg.isStreaming ? '正在执行' : '挂起等待授权'} <code className="bg-primary/10 px-1 py-0.5 rounded text-[9px] text-current">{p.tool}</code>
                                           {p.args?.command && (
                                             <span className="text-on-surface-variant ml-1 font-normal">
                                               {String(p.args.command).length > 50

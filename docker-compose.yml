@@ -43,15 +43,16 @@ services:
         condition: service_healthy
       sandbox:
         condition: service_started
+    env_file: .env
     environment:
       - BLINDVAULT_ENCRYPTION_KEY=${BLINDVAULT_ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379/0
+      - BLINDVAULT_REDIS_URL=redis://redis:6379/0
       - DATABASE_URL=postgresql://blindvault:${PG_PASSWORD:-blindvault_default_pg_pass}@postgres:5432/blindvault
+      - BLINDVAULT_DATABASE_URL=postgresql://blindvault:${PG_PASSWORD:-blindvault_default_pg_pass}@postgres:5432/blindvault
       - SANDBOX_URL=http://sandbox:8001
+      - BLINDVAULT_SANDBOX_URL=http://sandbox:8001
       - LLM_PROVIDER=${LLM_PROVIDER:-openai}
-      - LLM_MODEL=${LLM_MODEL:-}
-      - LLM_BASE_URL=${LLM_BASE_URL:-}
-      - LLM_API_KEY=${LLM_API_KEY:-}
 
   frontend:
     build: ./frontend

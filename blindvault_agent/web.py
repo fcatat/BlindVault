@@ -607,6 +607,58 @@ async def update_agent_config(req: AgentConfigUpdate):
     
     return await get_agent_config()
 
+class SandboxStatusResponse(BaseModel):
+    status: str
+    version: str
+    tools: list[str]
+
+@app.get("/api/config/sandbox/status", response_model=SandboxStatusResponse)
+async def get_sandbox_status():
+    """中转获取诊断沙箱的状态与可用客户端工具。"""
+    settings = get_agent_settings()
+    url = f"{settings.sandbox_url.rstrip('/')}/status"
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                return SandboxStatusResponse(
+                    status=data.get("status", "healthy"),
+                    version=data.get("version", "unknown"),
+                    tools=data.get("tools", [])
+                )
+            else:
+                return SandboxStatusResponse(status="offline", version="unknown", tools=[])
+    except Exception as e:
+        logger.warning("无法访问沙箱服务 %s: %s", url, str(e))
+        return SandboxStatusResponse(status="offline", version="unknown", tools=[])
+
+@app.post("/api/config/sandbox/upgrade", response_model=SandboxStatusResponse)
+async def upgrade_sandbox():
+    """手动触发诊断沙箱的模拟升级。"""
+    settings = get_agent_settings()
+    url = f"{settings.sandbox_url.rstrip('/')}/upgrade"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url)
+            if resp.status_code == 200:
+                status_url = f"{settings.sandbox_url.rstrip('/')}/status"
+                status_resp = await client.get(status_url)
+                if status_resp.status_code == 200:
+                    status_data = status_resp.json()
+                    return SandboxStatusResponse(
+                        status=status_data.get("status", "healthy"),
+                        version=status_data.get("version", "unknown"),
+                        tools=status_data.get("tools", [])
+                    )
+            raise HTTPException(status_code=500, detail="沙箱升级接口调用失败")
+    except Exception as e:
+        logger.error("沙箱升级失败: %s", str(e))
+        raise HTTPException(
+            status_code=503,
+            detail=f"无法连接到沙箱服务完成升级: {str(e)}"
+        )
+
 from blindvault_agent.security.redis_store import get_redis_client, get_store
 
 @app.get("/api/agent-health")

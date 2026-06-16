@@ -59,12 +59,26 @@ _COMPILED_HIGH_RISK = [
 def is_command_high_risk(command: str) -> Optional[str]:
     """
     检查命令是否高危。
-
+    首先检查配置中的 agent_high_risk_commands 列表，然后检查内置正则模式。
     返回风险描述（str）或 None（安全）。
     """
+    from blindvault_agent.security.config import get_settings
+
+    # 1. 检查配置的字符串列表
+    config_commands = get_settings().agent_high_risk_commands.split(",")
+    for cmd_prefix in config_commands:
+        cmd_prefix = cmd_prefix.strip()
+        if not cmd_prefix:
+            continue
+        # 简单匹配：如果命令包含该高危词汇（考虑边界）
+        if re.search(r'\b' + re.escape(cmd_prefix) + r'(\b|\s)', command, re.IGNORECASE):
+            return f"配置指定的高危操作（{cmd_prefix}）"
+
+    # 2. 检查内置正则
     for pattern, description in _COMPILED_HIGH_RISK:
         if pattern.search(command):
             return description
+
     return None
 
 

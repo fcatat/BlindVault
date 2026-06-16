@@ -68,7 +68,7 @@ class CompiledRule:
 _BUILTIN_RULES_DATA = [
     {
         "name": "中文上下文密码",
-        "pattern": r'(?:密码|口令|秘密|pass|pwd)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|(?:设置|改|设|修改|更改|改成|设成)(?:为|成)\s*|\s+)([^\s,，。；;、\n\r]+)',
+        "pattern": r'(?:密码|口令|秘密|\bpass\b|\bpwd\b)(?:\s*[:：=是为]\s*|\s+是\s+|\s+为\s+|(?:设置|改|设|修改|更改|改成|设成)(?:为|成)\s*|\s+)([^\s,，。；;、\n\r]+)',
         "secret_type": "password",
         "label": "auto_cn_password",
         "capture_group": 1,
@@ -352,60 +352,28 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
         return self._sanitize_count
 
 
-def make_sync_save_record(store: SecretStore) -> callable:
+def make_sync_save_record(store: "SecretStore") -> callable:
     """
     工厂函数：将异步 SecretStore.save_secret 包装为同步回调。
-
-    采用双轨制设计以解决多事件循环连接池冲突问题：
-    - 如果是真实 Redis，在独立线程和全新事件循环中，通过独立的临时 Redis 客户端执行写入，实现完美的生命周期隔离。
-    - 如果是 FakeRedis (测试环境)，使用同一个 FakeRedis 客户端完成内存中写入，避免因新建连接导致测试数据隔离。
+    通过在初始化时捕获主事件循环，并使用 run_coroutine_threadsafe 提交任务，
+    安全地共享主事件循环中的 redis/asyncpg 连接池，避免跨 loop 访问导致的连接断开。
     """
     import asyncio
-    import concurrent.futures
 
-    is_fake = "Fake" in type(store._redis).__name__
+    try:
+        main_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        main_loop = None
 
-    def save_record_sync(record: SecretRecord) -> None:
-        def _save_in_new_loop_real():
-            from redis.asyncio import Redis as AsyncRedis
-            from blindvault_agent.security.redis_store import SecretStore as TempSecretStore
-
-            conn_pool = store._redis.connection_pool
-            host = conn_pool.connection_kwargs.get("host", "localhost")
-            port = conn_pool.connection_kwargs.get("port", 6379)
-            db = conn_pool.connection_kwargs.get("db", 0)
-            redis_url = f"redis://{host}:{port}/{db}"
-
-            async def _async_task():
-                temp_client = AsyncRedis.from_url(redis_url, decode_responses=True)
-                temp_store = TempSecretStore(temp_client, key_prefix=store._prefix)
-                try:
-                    await temp_store.save_secret(record)
-                finally:
-                    await temp_client.aclose()
-
-            asyncio.run(_async_task())
-
-        def _save_in_new_loop_fake():
-            # FakeRedis 没有真实 socket，可直接运行
-            asyncio.run(store.save_secret(record))
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            # 在已有事件循环中，提交到线程池中执行以防死锁
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                fn = _save_in_new_loop_fake if is_fake else _save_in_new_loop_real
-                future = pool.submit(fn)
-                future.result(timeout=10)
+    def save_record_sync(record: "SecretRecord") -> None:
+        if main_loop and not main_loop.is_closed():
+            asyncio.run_coroutine_threadsafe(store.save_secret(record), main_loop)
         else:
-            if is_fake:
-                _save_in_new_loop_fake()
-            else:
-                _save_in_new_loop_real()
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(store.save_secret(record))
+            except RuntimeError:
+                asyncio.run(store.save_secret(record))
 
     return save_record_sync
 
