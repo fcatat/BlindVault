@@ -168,6 +168,43 @@ def detect_secrets_in_text(text: str, compiled_rules: list[CompiledRule]) -> lis
                 value_end=val_end,
             ))
 
+    # ---- 本地大模型语义检测（EE 功能） ----
+    try:
+        from blindvault_agent.ee import is_ee
+        from blindvault_agent.ee.local_model.client import make_sync_extract_secrets
+        from blindvault_agent.ee.local_model.settings import get_local_model_settings
+        
+        if is_ee():
+            settings = get_local_model_settings()
+            if settings.local_model_url:
+                sync_extract_secrets = make_sync_extract_secrets()
+                model_results = sync_extract_secrets(
+                    text,
+                    model_url=settings.local_model_url,
+                    model_name=settings.local_model_name,
+                    timeout=settings.local_model_timeout,
+                    api_type=settings.local_model_api_type,
+                    system_prompt=settings.local_model_prompt,
+                    disable_cot=settings.local_model_disable_cot,
+                )
+                
+                for mr in model_results:
+                    if mr.value not in seen_values:
+                        seen_values.add(mr.value)
+                        # 模型只能找到文本，难以精确定位索引位置。由于匹配后是用全局替换（rebuild_content 不依赖索引），
+                        # 此处 start/end 填 -1 即可
+                        val_start = text.find(mr.value)
+                        val_end = val_start + len(mr.value) if val_start != -1 else -1
+                        matches.append(SensitiveMatch(
+                            secret_type=mr.secret_type,
+                            label=mr.label,
+                            value=mr.value,
+                            value_start=val_start,
+                            value_end=val_end,
+                        ))
+    except Exception as e:
+        logger.warning("本地模型识别失败，降级为仅正则: %s", str(e))
+
     # 从后向前排序
     matches.sort(key=lambda x: x.value_start, reverse=True)
     return matches

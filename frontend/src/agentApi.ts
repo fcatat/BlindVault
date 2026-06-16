@@ -185,3 +185,31 @@ export async function testRule(pattern: string, captureGroup: number, testText: 
   }
   return res.json();
 }
+
+// EE Local Model endpoints
+export async function getLocalModelConfig(): Promise<any> {
+  const res = await fetch(`${API_BASE}/local-model/config`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch local model config');
+  return res.json();
+}
+
+export async function updateLocalModelConfig(config: any): Promise<void> {
+  const res = await fetch(`${API_BASE}/local-model/config`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error('Failed to update local model config');
+}
+
+export async function checkLocalModel(config: any): Promise<any> {
+  const res = await fetch(`${API_BASE}/local-model/check`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) throw new Error('Failed to check local model');
+  return res.json();
+}

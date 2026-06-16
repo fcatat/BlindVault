@@ -1,5 +1,20 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-16 18:00 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：执行 #40 任务 B 段：把本地模型接入主层 + API + 前端
+- 完成度：**待复审 (Pending Review)**
+- 动过的文件：
+  - `blindvault_agent/middleware/reversible_sanitize.py`：修改了 `detect_secrets_in_text` 主层核心逻辑。在现有正则跑完后，如果 `is_ee()` 为真，则追加第二层使用 `make_sync_extract_secrets` 调用本地模型进行语义脱敏。并处理了静默降级（出异常时仅 log 不阻断）。
+  - `blindvault_agent/ee/__init__.py`：将 `is_ee()` 的实现改为实时从环境变量读取 `BLINDVAULT_EE_LICENSE`。
+  - `blindvault_agent/web.py`：新增了三个 EE 专属端点 `GET /api/local-model/config`, `PUT /api/local-model/config` (含 `.env` 覆写与配置刷新), `POST /api/local-model/check`。
+  - `frontend/src/agentApi.ts`：补充了这三个 API 的前端调用函数。
+  - `frontend/src/components/LocalModelConfig.tsx`：实现了功能完整的 EE 网关配置面板，包括 isEE 为 `false` 时的 PRO 锁面板逻辑，并关联了真实的后端 API 和连通性检测。
+  - `frontend/src/components/Sidebar.tsx`：将未激活 EE 状态下的侧边栏按钮修改为可点击（从而点击后能进入配置页看到 PRO 锁面）。
+  - `frontend/src/i18n.tsx`：补充了中英文版 PRO 锁提示文案翻译字典。
+  - `blindvault_agent/tests/test_hitl.py`：修复了旧断言文字与代码实现不符的失败（与本次 B 段无逻辑关联，顺手清理保证全绿）。
+- 安全检查结论：主层脱敏结果附加在现有正则之后，仅提取值作为 `matches` 并进行排序；未改变核心的占位符构建（`build_placeholder`）和密文存储逻辑，确保无明文残留。
+- 验收结果：本地 `pytest blindvault_agent/tests/` 测试全绿。
+- 后续待办（交给用户）：请用户进行**人工代码复审**。安全关键代码（改主层）已按要求标为“待复审”。确认无误后可进行下一步！
 ## 2026-06-16 17:21 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：执行 #40 任务 A 段：本地模型脱敏网关 EE 子目录建制
 - 完成度：done

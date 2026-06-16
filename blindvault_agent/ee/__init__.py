@@ -2,11 +2,9 @@ import os
 import logging
 
 _logger = logging.getLogger(__name__)
-_EE_LICENSE = os.getenv("BLINDVAULT_EE_LICENSE", "").strip()
-
 def is_ee() -> bool:
-    """返回当前是否激活 EE。简版：环境变量非空即激活，后续可换 RSA 签名校验。"""
-    return bool(_EE_LICENSE)
+    """返回当前是否激活 EE。简版：每次都实时从环境变量读取，后续可换 RSA 签名校验。"""
+    return bool(os.getenv("BLINDVAULT_EE_LICENSE", "").strip())
 
 def get_ee_features() -> dict:
     if not is_ee():

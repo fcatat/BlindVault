@@ -712,6 +712,109 @@ async def get_agent_health():
     return health_data
 
 
+# ==========================================
+# 本地模型 EE 端点
+# ==========================================
+from pydantic import ConfigDict
+from urllib.parse import urlparse
+import dotenv
+
+class LocalModelConfigUpdate(BaseModel):
+    local_model_url: Optional[str] = None
+    local_model_name: Optional[str] = None
+    local_model_api_type: Optional[str] = None
+    local_model_timeout: Optional[float] = None
+    local_model_prompt: Optional[str] = None
+    local_model_disable_cot: Optional[bool] = None
+
+    model_config = ConfigDict(extra='forbid')
+
+class LocalModelCheckRequest(BaseModel):
+    url: str
+    api_type: str
+    model_name: str
+    timeout: float = 2.0
+
+@app.get("/api/local-model/config")
+async def get_local_model_config():
+    from blindvault_agent.ee import is_ee
+    from blindvault_agent.ee.local_model.settings import get_local_model_settings
+    
+    settings = get_local_model_settings()
+    
+    # 截断系统提示词
+    prompt_preview = settings.local_model_prompt
+    if prompt_preview and len(prompt_preview) > 200:
+        prompt_preview = prompt_preview[:200] + "..."
+        
+    return {
+        "is_ee": is_ee(),
+        "url": settings.local_model_url,
+        "model_name": settings.local_model_name,
+        "api_type": settings.local_model_api_type,
+        "timeout": settings.local_model_timeout,
+        "prompt": prompt_preview,
+        "disable_cot": settings.local_model_disable_cot
+    }
+
+@app.put("/api/local-model/config")
+async def update_local_model_config(req: LocalModelConfigUpdate):
+    from blindvault_agent.ee import require_ee
+    require_ee("local-model-config")
+    
+    if req.local_model_timeout is not None:
+        if not (0.1 <= req.local_model_timeout <= 30):
+            raise HTTPException(status_code=400, detail="Timeout must be between 0.1 and 30")
+            
+    if req.local_model_api_type is not None:
+        if req.local_model_api_type not in ("ollama", "openai", "custom_fastapi"):
+            raise HTTPException(status_code=400, detail="Invalid API type")
+            
+    if req.local_model_url is not None:
+        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_URL", req.local_model_url)
+    if req.local_model_name is not None:
+        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_NAME", req.local_model_name)
+    if req.local_model_api_type is not None:
+        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_API_TYPE", req.local_model_api_type)
+    if req.local_model_timeout is not None:
+        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_TIMEOUT", str(req.local_model_timeout))
+    if req.local_model_prompt is not None:
+        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_PROMPT", req.local_model_prompt)
+    if req.local_model_disable_cot is not None:
+        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_DISABLE_COT", str(req.local_model_disable_cot).lower())
+        
+    # Reload settings singleton cache
+    from blindvault_agent.ee.local_model.settings import get_local_model_settings
+    get_local_model_settings.cache_clear()
+    
+    host_part = "none"
+    if req.local_model_url:
+        try:
+            parsed = urlparse(req.local_model_url)
+            host_part = parsed.netloc or req.local_model_url
+        except:
+            pass
+            
+    logger.info("审计 - [更新本地模型配置] host=%s, api_type=%s, model=%s", host_part, req.local_model_api_type, req.local_model_name)
+    return {"status": "success"}
+
+@app.post("/api/local-model/check")
+async def check_local_model(req: LocalModelCheckRequest):
+    from blindvault_agent.ee import require_ee
+    from blindvault_agent.ee.local_model.client import check_model_health
+    require_ee("local-model-check")
+    
+    try:
+        res = await check_model_health(
+            model_url=req.url,
+            timeout=req.timeout,
+            api_type=req.api_type,
+            model_name=req.model_name
+        )
+        return res
+    except Exception as e:
+        return {"available": False, "error": str(e)}
+
 """
 测试命令：
 uvicorn blindvault_agent.web:app --host 0.0.0.0 --port 8000

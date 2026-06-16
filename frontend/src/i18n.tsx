@@ -179,6 +179,8 @@ const translations = {
     'config.localModelDisableCot': '禁用 CoT 思考链 (No-CoT)',
     'config.localModelDisableCotHint': '开启后将强制限制模型输出思考步骤，极大地降低网络推理延迟，保障脱敏的实时性。',
     'config.localModelAdvanced': '高级网关配置',
+    'config.localModelLockedTitle': '升级 EE 解锁本地模型语义脱敏',
+    'config.localModelLockedDesc': '基础版仅支持正则表达式脱敏。启用企业版 (EE) License 后，您可接入本地部署的大语言模型（如 Ollama + Qwen），实现基于上下文的高级语义脱敏，在零数据泄露的情况下识别变体凭证。',
 
 
     // Dashboard
@@ -526,6 +528,8 @@ const translations = {
     'config.localModelDisableCot': 'Disable CoT Reasoning',
     'config.localModelDisableCotHint': 'Forces model to skip outputting thinking steps, significantly reducing inference latency for real-time sanitization.',
     'config.localModelAdvanced': 'Advanced Gateway Options',
+    'config.localModelLockedTitle': 'Upgrade to EE to Unlock Local Model Sanitization',
+    'config.localModelLockedDesc': 'The community edition only supports regex sanitization. By enabling an Enterprise (EE) License, you can connect locally deployed LLMs (e.g. Ollama + Qwen) to achieve advanced context-aware semantic sanitization, identifying variant credentials with zero data leakage.',
 
 
     // Dashboard

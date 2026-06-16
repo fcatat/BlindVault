@@ -251,8 +251,9 @@ function EnterpriseNavItem({
 
   return (
     <div 
-      className="group relative flex items-center gap-3 text-on-surface-variant/50 px-4 py-2 rounded cursor-default transition-all duration-200 hover:bg-surface-container-low"
+      className="group relative flex items-center gap-3 text-on-surface-variant/50 px-4 py-2 rounded cursor-pointer transition-all duration-200 hover:bg-surface-container-low"
       title={t('sidebar.comingSoon')}
+      onClick={onClick}
     >
       <span className="opacity-40">{icon}</span>
       <div className="flex-1 min-w-0">

@@ -413,4 +413,51 @@ async def check_model_health(
         except Exception as e:
             return {"available": False, "models": [], "error": f"连接自定义 FastAPI 接口失败: {str(e)}"}
 
-    return {"available": False, "models": [], "error": "未知的 API 协议类型"}
+
+
+# ============================================================
+# 同步桥接
+# ============================================================
+
+def make_sync_extract_secrets() -> callable:
+    """
+    返回一个同步的 extract_secrets 函数，用于在同步中间件中调用。
+    使用独立线程或 asyncio.run 运行异步逻辑。
+    """
+    import asyncio
+    import concurrent.futures
+
+    def sync_extract_secrets(
+        text: str,
+        *,
+        model_url: str,
+        model_name: str = "qwen3:0.6b",
+        timeout: float = 2.0,
+        api_type: str = "ollama",
+        system_prompt: str = "",
+        disable_cot: bool = True,
+    ) -> list[DetectedSecret]:
+        async def _run():
+            return await extract_secrets(
+                text,
+                model_url=model_url,
+                model_name=model_name,
+                timeout=timeout,
+                api_type=api_type,
+                system_prompt=system_prompt,
+                disable_cot=disable_cot,
+            )
+            
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+            
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor(1) as pool:
+                future = pool.submit(asyncio.run, _run())
+                return future.result()
+        else:
+            return asyncio.run(_run())
+
+    return sync_extract_secrets

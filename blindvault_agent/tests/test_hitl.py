@@ -116,4 +116,4 @@ def test_high_risk_returns_description():
     """高危检测应返回人可读的风险描述。"""
     desc = is_command_high_risk("DROP DATABASE production")
     assert desc is not None
-    assert "数据库" in desc
+    assert "高危操作" in desc
