@@ -95,3 +95,93 @@ export async function approveAgent(threadId: string, decision: 'approve' | 'reje
   }
   return res.json();
 }
+
+// ---- Rules API ----
+export interface SanitizeRule {
+  id: string;
+  name: string;
+  pattern: string;
+  secret_type: string;
+  label: string;
+  capture_group: number;
+  enabled: boolean;
+  is_builtin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listRules(): Promise<SanitizeRule[]> {
+  const res = await fetch(`${API_BASE}/sanitize-rules`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to list rules');
+  return res.json();
+}
+
+export async function createRule(payload: Partial<SanitizeRule>): Promise<SanitizeRule> {
+  const res = await fetch(`${API_BASE}/sanitize-rules`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to create rule');
+  }
+  return res.json();
+}
+
+export async function updateRule(id: string, payload: Partial<SanitizeRule>): Promise<SanitizeRule> {
+  const res = await fetch(`${API_BASE}/sanitize-rules/${id}`, {
+    method: 'PUT',
+    headers: getHeaders(),
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to update rule');
+  }
+  return res.json();
+}
+
+export async function deleteRule(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/sanitize-rules/${id}`, {
+    method: 'DELETE',
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to delete rule');
+}
+
+export async function restoreDefaults(): Promise<void> {
+  const res = await fetch(`${API_BASE}/sanitize-rules/restore-defaults`, {
+    method: 'POST',
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to restore defaults');
+}
+
+export async function aiSuggestRule(samples: string[], description: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/sanitize-rules/ai-suggest`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ samples, description }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to suggest rule');
+  }
+  return res.json();
+}
+
+export async function testRule(pattern: string, captureGroup: number, testText: string): Promise<{ matches: any[] }> {
+  const res = await fetch(`${API_BASE}/sanitize-rules/test`, {
+    method: 'POST',
+    headers: getHeaders(),
+    body: JSON.stringify({ pattern, capture_group: captureGroup, test_text: testText }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || 'Failed to test rule');
+  }
+  return res.json();
+}

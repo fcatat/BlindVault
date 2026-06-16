@@ -21,20 +21,6 @@ logger = logging.getLogger(__name__)
 # 全局 Agent 实例（支持会话级并发，状态由 checkpointer 管理）
 agent = None
 
-async def safe_demo_executor(command: str) -> dict:
-    """安全的 Mock 执行器，用于 Web 演示，防止真实执行高危命令"""
-    if "DROP" in command or "rm " in command or "mkfs" in command:
-        # 强制替换任何看起来像密码的地方为 [REDACTED]，以展示脱敏效果
-        import re
-        safe_cmd = re.sub(r'(://[^:@\s]*:)[^@\s]+(@)', r'\1[REDACTED]\2', command)
-        return {
-            "stdout": f"✅ [模拟执行成功] 该命令在 Demo 模式下已被安全拦截并模拟执行: {safe_cmd}",
-            "stderr": "",
-            "exit_code": 0
-        }
-    from blindvault_agent.cli import local_subprocess_executor
-    return await local_subprocess_executor(command)
-
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
 @asynccontextmanager
@@ -42,13 +28,16 @@ async def lifespan(app: FastAPI):
     global agent
     logger.info("初始化 BlindVault Agent Web 服务...")
     # B1 fail-closed 保护：注入安全执行器
-    # 坑 #2: 注入沙箱/Mock 执行器
     settings = get_agent_settings()
     sys_prompt = settings.system_prompt
+    
+    from blindvault_agent.tools.sandbox_executor import make_sandbox_executor
+    executor = make_sandbox_executor(settings.sandbox_url)
+
     async with AsyncRedisSaver.from_conn_string(settings.redis_url) as checkpointer:
         await checkpointer.setup()
         agent = create_blindvault_agent(
-            executor=safe_demo_executor,
+            executor=executor,
             system_prompt=sys_prompt,
             checkpointer=checkpointer
         )
@@ -501,18 +490,132 @@ async def test_sanitize_rule(req: RuleTestRequest):
 
 
 from blindvault_agent.config import get_agent_settings
+import dotenv
+from pydantic import ConfigDict, Field
+import time
+import httpx
+
+_START_TIME = time.time()
+_health_cache = {"timestamp": 0, "data": None}
+
+class AgentConfigUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    default_model: Optional[str] = None
+    max_iterations: Optional[int] = Field(None, ge=5, le=30)
 
 @app.get("/api/agent-config")
 async def get_agent_config():
-    """返回 Agent 配置，屏蔽敏感信息"""
+    """返回 Agent 配置，分可编辑与只读组，严格屏蔽敏感信息"""
     settings = get_agent_settings()
+    
+    sys_prompt = settings.system_prompt
+    if len(sys_prompt) > 200:
+        sys_prompt = sys_prompt[:200] + "..."
+        
     return {
-        "litellm_base_url": settings.litellm_base_url,
-        "default_model": settings.default_model,
-        "has_api_key": bool(settings.litellm_api_key),
-        "system_prompt": settings.system_prompt,
-        "max_iterations": settings.max_iterations
+        "editable": {
+            "default_model": settings.default_model,
+            "max_iterations": settings.max_iterations
+        },
+        "readonly": {
+            "litellm_base_url": settings.litellm_base_url,
+            "has_api_key": bool(settings.litellm_api_key and settings.litellm_api_key != "PLACEHOLDER"),
+            "system_prompt": sys_prompt
+        }
     }
+
+@app.put("/api/agent-config")
+async def update_agent_config(req: AgentConfigUpdate):
+    """更新 Agent 部分配置，持久化到 .env"""
+    settings = get_agent_settings()
+    
+    # 获取验证用的 api_key
+    api_key_to_use = settings.litellm_api_key
+    
+    # 如果要改 default_model，先去网关校验
+    if req.default_model is not None:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                res = await client.get(
+                    f"{settings.litellm_base_url}/models", 
+                    headers={"Authorization": f"Bearer {api_key_to_use}"}
+                )
+                if res.status_code == 200:
+                    models_data = res.json()
+                    model_ids = [m.get("id") for m in models_data.get("data", [])]
+                    if req.default_model not in model_ids:
+                        raise HTTPException(status_code=400, detail=f"The model '{req.default_model}' is not registered in the LiteLLM Gateway.")
+                elif res.status_code == 401:
+                    raise HTTPException(status_code=401, detail="LiteLLM Gateway returned 401 Unauthorized. Check your Virtual API Key.")
+                else:
+                    raise HTTPException(status_code=400, detail=f"Model verification failed: Gateway returned {res.status_code}.")
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=400, detail=f"Failed to connect to LiteLLM Gateway: {e}")
+
+    if req.default_model is not None:
+        dotenv.set_key(".env", "BLINDVAULT_DEFAULT_MODEL", req.default_model)
+        logger.info(f"审计 - [配置更新] default_model: {settings.default_model} -> {req.default_model}")
+        
+    if req.max_iterations is not None:
+        dotenv.set_key(".env", "BLINDVAULT_MAX_ITERATIONS", str(req.max_iterations))
+        logger.info(f"审计 - [配置更新] max_iterations: {settings.max_iterations} -> {req.max_iterations}")
+        
+    # 清除单例缓存以重新加载
+    get_agent_settings.cache_clear()
+    
+    return await get_agent_config()
+
+from blindvault_agent.security.redis_store import get_redis_client, get_store
+
+@app.get("/api/agent-health")
+async def get_agent_health():
+    global _health_cache
+    now = time.time()
+    
+    if now - _health_cache["timestamp"] < 5 and _health_cache["data"]:
+        _health_cache["data"]["uptime"] = int(now - _START_TIME)
+        return _health_cache["data"]
+        
+    settings = get_agent_settings()
+    health_data = {
+        "uptime": int(now - _START_TIME),
+        "redis_ok": False,
+        "litellm_ok": False,
+        "active_secrets": 0
+    }
+    
+    try:
+        redis_client = await get_redis_client()
+        await redis_client.ping()
+        health_data["redis_ok"] = True
+    except Exception as e:
+        logger.warning(f"Redis health check failed: {e}")
+        
+    try:
+        if settings.litellm_api_key and settings.litellm_api_key != "PLACEHOLDER":
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                res = await client.get(
+                    f"{settings.litellm_base_url}/models", 
+                    headers={"Authorization": f"Bearer {settings.litellm_api_key}"}
+                )
+                if res.status_code == 200:
+                    health_data["litellm_ok"] = True
+                else:
+                    logger.warning(f"LiteLLM health check returned {res.status_code}")
+    except Exception as e:
+        logger.warning(f"LiteLLM health check failed: {e}")
+        
+    try:
+        store = await get_store()
+        secrets = await store.list_secrets("system")
+        health_data["active_secrets"] = sum(1 for s in secrets if getattr(s.status, "value", str(s.status)) == "active")
+    except Exception as e:
+        logger.warning(f"Vault health check failed: {e}")
+        
+    _health_cache["timestamp"] = now
+    _health_cache["data"] = health_data.copy()
+    
+    return health_data
 
 
 """

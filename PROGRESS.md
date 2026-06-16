@@ -149,6 +149,73 @@
 
 ## 交接日志（最新在上）
 
+## 2026-06-16 11:15 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#35 接入真沙箱执行器
+- 完成度：done
+- 动过的文件：
+  - `docker-compose.yml`：为 `sandbox` 补充了 `expose: - "8001"` 配置，且严格不使用 ports 以避免暴露至 host。
+  - `blindvault_agent/config.py`：向 `AgentSettings` 增加了 `sandbox_url` 字段配置。
+  - `blindvault_agent/tools/sandbox_executor.py`：新增了该模块。实现了 fail-closed 控制与基于 httpx 的 POST 异步调用逻辑，严格限制了日志中不打印含明文的 `command` 全文，且封装异常兜底返回格式以触发重试。
+  - `blindvault_agent/web.py`：将执行器由 `safe_demo_executor` 替换为了 `make_sandbox_executor`。
+  - `.env` / `.env.example`：补充了 `BLINDVAULT_SANDBOX_URL=http://sandbox:8001`。
+- 验收结果：本地 `docker-compose up -d` 正常拉起。进入 `backend` 容器对 `sandbox` 请求 `/status` 的测试返回 200 OK 且拿到 `healthy` 响应。未修改旧有 sandbox 的核心代码。
+- 下一步具体动作：已全量完成本任务代码部分与可用性验证，等待用户进行真实环境下的 e2e 验收与安全核验（fail-closed、无 host 暴露）。
+- 卡点/注意：经实测确认，原 `Dockerfile.sandbox` 中的 Aliyun Kubernetes 镜像下载地址已经返回 404（不可达），但由于规约中的“红线 4”严格要求“不要改 Dockerfile.sandbox —— 直接复用旧版”，故未对镜像构建文件进行任何修改。若用户需要触发真实 build，请自行解决网络或更新 Dockerfile URL。为了验证当前改动，利用了历史已经构建完成缓存于本地的 `blindvault-sandbox` 最新镜像运行，成功通过连通性测试。
+- 提交：待提交
+
+## 2026-06-16 10:25 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#34 安全回退：撤销前端修改 LiteLLM API Key 的能力
+- 完成度：已全部完成。
+- 追加改动说明：
+  1. **移除后端能力**：修改 `blindvault_agent/web.py`，从 `AgentConfigUpdate` 中删除了 `litellm_api_key` 字段（保持 `extra='forbid'` 以在收到含有该字段的请求时直接返回 422 错误）。移除了通过 `dotenv.set_key` 将 API Key 写入 `.env` 的逻辑。
+  2. **移除前端能力**：修改了 `frontend/src/components/AgentConfig.tsx` 和 `api.ts`，删除了 `Virtual API Key` 的输入框及其对应状态，将其恢复为原先的只读状态栏，不再向后端发送该字段。
+  3. **补充协作规约**：更新了 `AGENTS.md`，在“4. 安全铁律”部分明确追加了第 6 条规则：“LiteLLM API key 只由部署方在 .env 中维护，绝不在任何 API/UI 中暴露或允许修改。修改 key 必须直接编辑 .env 并重启服务。”
+- 下一步计划：整体 #34 安全回退已完成，随时可承接下一个任务点。
+
+## 2026-06-15 19:30 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#33 Agent Config 页面重构 (最终打磨)
+- 完成度：复审体验打磨全部完成，#33 正式宣告结束。
+- 追加改动说明：
+  1. **移除旧标识**：清除了侧边栏 Agent 配置上遗留的 `(legacy 未接入)` 字样。
+  2. **API Key 更新支持**：根据用户反馈，在可编辑区新增了 `Virtual API Key (LiteLLM)` 修改功能。输入框默认留空（防止密钥泄漏），如果填入新 Key，则覆盖保存至 `.env`。
+  3. **实时模型探活校验**：针对 `default_model` 的更新增加了更严谨的校验。调用 `GET /v1/models` 从 LiteLLM 网关拉取可用模型列表，如果用户填入了网关未注册的模型（如 `gpt-5.4-mini1`），则直接拦截并返回 `400 Bad Request` 报错。
+  4. **成功视觉反馈**：补充了用户所期望的反馈体验。在保存配置并应用成功后，前端会在上方滑出一个绿色且自动消失（3s）的 `Configuration saved successfully!` 提示横幅。
+- 下一步计划：整体 #33 任务收尾，随时可以承接下一任务点。
+- 当前任务：#33 Agent Config 页面重构
+- 完成度：已全部完成。
+- 追加改动说明：
+  1. **配置接口重构**：修改 `GET /api/agent-config`，将响应划分为 `editable` 和 `readonly` 两组。彻底杜绝 `litellm_api_key` 出现，将 `system_prompt` 严格截断至 200 字符。
+  2. **新增修改接口**：增加 `PUT /api/agent-config` 接口。采用 Pydantic 的 `extra=forbid` 机制，严格限制只允许修改 `default_model` 和 `max_iterations` (增加 5-30 边界校验)。更新时持久化到 `.env` 并带有审计日志记录。
+  3. **健康检测看板**：新增 `GET /api/agent-health` 接口，提供 5 秒防刷缓存，对 Redis 连通性、LiteLLM 模型探测、库内活跃凭证数量和系统运行时长做汇总。所有失败走软降级 `ok: false`，不报 500。
+  4. **前端深度重构**：`AgentConfig.tsx` 页面改版。顶层加入健康看板（包含运行时间、Redis/LLM 状态、凭证数），且每 30 秒轮询刷新。剥离可编辑区与只读核心配置区，并补充完备的国际化 i18n 词条。
+- 下一步计划：请用户测试体验。若符合预期，#33 关闭，可推进下一任务。
+
+## 2026-06-15 19:10 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#32 子任务 D (前端 UI 优化与 Bug 修复)
+- 完成度：复审期间的追加打磨已全部完成
+- 追加改动说明：
+  1. **重启后端**：由于前端遇到了 `404 Not Found`，排查后发现是由于 `uvicorn` 没有热重载，手动重启了后端进程，解决了接口找不到的问题。
+  2. **替换原生 confirm**：重写了删除和恢复默认操作时的二次确认逻辑，移除了丑陋的浏览器原生 `confirm()`，替换为符合系统 UI 主题的自定义 Modal 弹窗。
+  3. **全局测试区改造**：取消了单个规则内的测试输入框，在规则列表上方新增了统一的**全局脱敏匹配测试**区域。输入文本后，前端会并发调用 API 检测所有已启用的规则，并在命中时将对应的规则名称和匹配到的内容显示出来；同时，在左侧列表中将被命中的规则自动高亮（黄色边框 + 呼吸灯点缀）。
+  4. **全量 i18n 覆盖**：将以上新增界面文案全部移入 `i18n.tsx`，并对内置规则名称（如“中文上下文密码”）做了拦截处理。在非中文环境下，内置规则名会自动映射展示对应的外语翻译，不破坏原始数据库信息。
+- 下一步计划：整体 #32 任务（包含所有追加修改）已宣告完结。请用户进行最终的整体复审。若无问题，可开启下一个任务点。
+## 2026-06-15 18:50 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：#32 子任务 D (前端对接、向导式 UI 及 i18n 合并)
+- 完成度：D 段开发完毕（整体任务 #32 待用户浏览器自测复审）
+- 动过的文件：
+  - `frontend/src/agentApi.ts`：追加了对 `/api/sanitize-rules` 的全量方法封装。
+  - `frontend/src/components/Sidebar.tsx`：去除了“Sanitization Rules”的 "(legacy 未接入)" 标记。
+  - `frontend/src/components/RulesConfig.tsx`：进行了彻底重写。左侧渲染规则列表（展示`默认`/`自定义`标签），右侧显示规则详情及匹配测试框。顶侧加入黄条提示“新会话生效”。并实现了“三步式”新建规则 Modal (`RuleWizardModal`) 包含 AI 生成及实时正则验证功能。
+  - `frontend/src/i18n.tsx`：将 RulesConfig 中的硬编码中文抽离并加入中英词典，顺带清洗了 `AgentConfig.tsx` 中的旧硬编码中文。
+  - `frontend/src/components/AgentConfig.tsx`：已核实 `#30-C` 的集成（无 key 泄露并渲染 boolean 状态），同时全部采用 `t()` 方法取词典做双语适配。
+- 实现红线：
+  1. AI 候选区加入警告：“⚠️ AI 生成，请人工核对”。
+  2. 自定义保存区加入警告：“⚠️ 自定义规则错误可能导致密码未被脱敏，请用测试框充分验证。”
+- 下一步计划：请用户打开浏览器，在 UI 层自测：
+  1. 能看到 A 段种子化的 4 条内置规则。
+  2. 测试删除一条后刷新，再通过“恢复默认”看是否复原。
+  3. 通过 3 步向导新建一个自定义规则并成功保存。
+  4. 切换中英语言无中文残留。
 ## 2026-06-15 18:45 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：#32 子任务 C (AI 辅助生成 + 规则测试端点)
 - 完成度：C 段待复审

@@ -28,6 +28,8 @@ services:
       context: .
       dockerfile: Dockerfile.sandbox
     restart: unless-stopped
+    expose:
+      - "8001"
 
   backend:
     build: .

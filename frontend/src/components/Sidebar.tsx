@@ -113,13 +113,13 @@ export function Sidebar({
         />
         <NavItem 
           icon={<EyeOff className="w-4 h-4" />} 
-          label={t('sidebar.sanitizationRules') + ' (legacy 未接入)'} 
+          label={t('sidebar.sanitizationRules')} 
           isActive={activeView === 'rules'} 
           onClick={() => onNavigate('rules')} 
         />
         <NavItem 
           icon={<Bot className="w-4 h-4" />} 
-          label={t('sidebar.agentConfig') + ' (legacy 未接入)'} 
+          label={t('sidebar.agentConfig')} 
           isActive={activeView === 'config'} 
           onClick={() => onNavigate('config')} 
         />

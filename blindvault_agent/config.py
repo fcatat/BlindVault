@@ -40,6 +40,10 @@ class AgentSettings(BaseSettings):
     )
 
     # ---- Agent 行为 ----
+    sandbox_url: str = Field(
+        default="",
+        description="沙箱服务 URL，如 http://sandbox:8001。为空则拒绝执行命令（fail-closed）",
+    )
     system_prompt: str = Field(
         default=(
             "你是运行在 BlindVault 受控环境里的安全运维 Agent。\n"

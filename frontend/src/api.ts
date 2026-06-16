@@ -234,11 +234,15 @@ export async function streamAgent(
 // ---- Config 类型 ----
 
 export interface AgentConfigData {
-  litellm_base_url: string;
-  default_model: string;
-  has_api_key: boolean;
-  system_prompt: string;
-  max_iterations: number;
+  editable: {
+    default_model: string;
+    max_iterations: number;
+  };
+  readonly: {
+    litellm_base_url: string;
+    has_api_key: boolean;
+    system_prompt: string;
+  };
 }
 
 // ---- Config API ----
@@ -248,6 +252,33 @@ export async function getAgentConfig(): Promise<AgentConfigData> {
     headers: DEFAULT_HEADERS,
   });
   if (!res.ok) throw new Error(`获取配置失败: ${res.status}`);
+  return res.json();
+}
+
+export async function updateAgentConfig(payload: { default_model?: string; max_iterations?: number }): Promise<AgentConfigData> {
+  const res = await fetch(`${API_BASE}/agent-config`, {
+    method: 'PUT',
+    headers: DEFAULT_HEADERS,
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    await throwError(res);
+  }
+  return res.json();
+}
+
+export interface AgentHealth {
+  uptime: number;
+  redis_ok: boolean;
+  litellm_ok: boolean;
+  active_secrets: number;
+}
+
+export async function getAgentHealth(): Promise<AgentHealth> {
+  const res = await fetch(`${API_BASE}/agent-health`, {
+    headers: DEFAULT_HEADERS,
+  });
+  if (!res.ok) throw new Error(`获取健康状态失败: ${res.status}`);
   return res.json();
 }
 

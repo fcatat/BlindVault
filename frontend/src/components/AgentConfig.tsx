@@ -1,15 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Bot, Server, Eye, EyeOff, Loader2, Cpu, Globe, ShieldCheck, Zap, Info, Terminal, RefreshCw, Check
+  Bot, Server, Eye, EyeOff, Loader2, Cpu, Globe, ShieldCheck, Terminal, RefreshCw, Check, Activity, Save, KeyRound, Clock, Database, CheckCircle2, XCircle, Info
 } from 'lucide-react';
-import { getAgentConfig, getSandboxStatus, upgradeSandbox, type AgentConfigData, type SandboxStatus } from '../api';
+import { getAgentConfig, updateAgentConfig, getAgentHealth, getSandboxStatus, upgradeSandbox, type AgentConfigData, type AgentHealth, type SandboxStatus } from '../api';
 import { useI18n } from '../i18n';
 
 export function AgentConfig() {
   const { t } = useI18n();
   const [config, setConfig] = useState<AgentConfigData | null>(null);
+  const [health, setHealth] = useState<AgentHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Editable state
+  const [editingModel, setEditingModel] = useState('');
+  const [editingIterations, setEditingIterations] = useState(15);
+  const [isSaving, setIsSaving] = useState(false);
 
   // 诊断沙箱状态
   const [sandbox, setSandbox] = useState<SandboxStatus | null>(null);
@@ -22,7 +29,19 @@ export function AgentConfig() {
   useEffect(() => {
     fetchConfig();
     fetchSandbox();
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 30000);
+    return () => clearInterval(interval);
   }, []);
+
+  const fetchHealth = async () => {
+    try {
+      const h = await getAgentHealth();
+      setHealth(h);
+    } catch (e) {
+      console.error('获取健康状态失败:', e);
+    }
+  };
 
   const fetchSandbox = async () => {
     try {
@@ -41,10 +60,36 @@ export function AgentConfig() {
       setLoading(true);
       const cfg = await getAgentConfig();
       setConfig(cfg);
+      setEditingModel(cfg.editable.default_model);
+      setEditingIterations(cfg.editable.max_iterations);
     } catch (e: any) {
       setError(e.message || t('config.fetchFailed'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    try {
+      setIsSaving(true);
+      setError('');
+      const payload: any = {
+        default_model: editingModel,
+        max_iterations: editingIterations,
+      };
+      
+      const updated = await updateAgentConfig(payload);
+      setConfig(updated);
+      setEditingModel(updated.editable.default_model);
+      setEditingIterations(updated.editable.max_iterations);
+      
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+      
+    } catch (e: any) {
+      setError(e.message || t('config.saveFailed'));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -57,7 +102,7 @@ export function AgentConfig() {
       setSandboxUpgraded(true);
       setTimeout(() => setSandboxUpgraded(false), 3000);
     } catch (e: any) {
-      setError(e.message || '升级沙箱失败');
+      setError(e.message || t('config.sandboxUpgradeFailed'));
     } finally {
       setSandboxUpgrading(false);
     }
@@ -71,60 +116,172 @@ export function AgentConfig() {
     );
   }
 
+  const formatUptime = (seconds: number) => {
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  };
+
   return (
     <div className="p-6 lg:p-10 max-w-4xl mx-auto w-full animate-in fade-in duration-500 overflow-y-auto pb-24">
       
       {/* Page Header */}
       <div className="mb-10">
         <div className="flex items-center gap-4 mb-3">
-          <div className="h-12 w-12 rounded-xl bg-primary-fixed border border-primary-fixed-dim flex items-center justify-center">
+          <div className="h-12 w-12 rounded-xl bg-primary-fixed border border-primary-fixed-dim flex items-center justify-center shadow-sm">
             <Bot className="text-on-primary-fixed w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-3xl font-headline font-bold text-on-surface tracking-tight">Agent 模型与策略配置</h1>
-            <p className="text-on-surface-variant text-sm mt-1">只读展示后端环境变量加载的核心配置参数。</p>
+            <h1 className="text-3xl font-headline font-bold text-on-surface tracking-tight">{t('config.headerTitle')}</h1>
+            <p className="text-on-surface-variant text-sm mt-1">{t('config.headerSubtitle')}</p>
           </div>
         </div>
       </div>
 
-      {/* API Configuration */}
-      <div className={`space-y-6 transition-all duration-300`}>
-        <div className="panel rounded-xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center gap-3">
-            <Globe className="w-4 h-4 text-primary" />
-            <span className="text-sm font-semibold text-on-surface">LiteLLM 网关配置</span>
-          </div>
-          
-          <div className="p-6 space-y-5">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Gateway URL</label>
-                <div className="font-mono text-sm text-on-surface bg-surface-container px-3 py-2 rounded border border-outline-variant/50 break-all">
-                  {config?.litellm_base_url || '未配置'}
-                </div>
-              </div>
+      {error && (
+        <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-600 px-4 py-3 rounded-lg text-sm flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+          <XCircle className="w-4 h-4 flex-shrink-0" />
+          {error}
+        </div>
+      )}
+      
+      {saveSuccess && (
+        <div className="mb-6 bg-green-500/10 border border-green-500/30 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2 animate-in fade-in slide-in-from-top-2">
+          <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+          {t('config.saveSuccess')}
+        </div>
+      )}
 
-              <div className="space-y-1">
-                <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Default Model</label>
-                <div className="font-mono text-sm text-on-surface bg-surface-container px-3 py-2 rounded border border-outline-variant/50 flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-primary" />
-                  {config?.default_model || '未配置'}
-                </div>
+      {/* Health Panel */}
+      <div className="mb-8 grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-surface border border-outline-variant/60 rounded-xl p-4 shadow-sm">
+          <div className="text-xs text-on-surface-variant font-medium mb-1 flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5" />
+            {t('config.healthUptime')}
+          </div>
+          <div className="text-xl font-semibold text-on-surface">
+            {health ? formatUptime(health.uptime) : '...'}
+          </div>
+        </div>
+
+        <div className="bg-surface border border-outline-variant/60 rounded-xl p-4 shadow-sm">
+          <div className="text-xs text-on-surface-variant font-medium mb-1 flex items-center gap-1.5">
+            <Database className="w-3.5 h-3.5" />
+            {t('config.healthRedis')}
+          </div>
+          <div className="text-xl font-semibold flex items-center gap-2">
+            {health ? (
+              health.redis_ok ? (
+                <><CheckCircle2 className="w-5 h-5 text-green-500" /> <span className="text-green-600 text-sm">{t('config.healthHealthy')}</span></>
+              ) : (
+                <><XCircle className="w-5 h-5 text-red-500" /> <span className="text-red-600 text-sm">{t('config.healthError')}</span></>
+              )
+            ) : '...'}
+          </div>
+        </div>
+
+        <div className="bg-surface border border-outline-variant/60 rounded-xl p-4 shadow-sm">
+          <div className="text-xs text-on-surface-variant font-medium mb-1 flex items-center gap-1.5">
+            <Globe className="w-3.5 h-3.5" />
+            {t('config.healthLiteLLM')}
+          </div>
+          <div className="text-xl font-semibold flex items-center gap-2">
+            {health ? (
+              health.litellm_ok ? (
+                <><CheckCircle2 className="w-5 h-5 text-green-500" /> <span className="text-green-600 text-sm">{t('config.healthHealthy')}</span></>
+              ) : (
+                <><XCircle className="w-5 h-5 text-amber-500" /> <span className="text-amber-600 text-sm">{t('config.healthError')}</span></>
+              )
+            ) : '...'}
+          </div>
+        </div>
+
+        <div className="bg-surface border border-outline-variant/60 rounded-xl p-4 shadow-sm">
+          <div className="text-xs text-on-surface-variant font-medium mb-1 flex items-center gap-1.5">
+            <KeyRound className="w-3.5 h-3.5" />
+            {t('config.healthActiveSecrets')}
+          </div>
+          <div className="text-xl font-semibold text-primary">
+            {health ? health.active_secrets : '...'}
+          </div>
+        </div>
+      </div>
+
+      {/* Editable Config */}
+      <div className="panel rounded-xl overflow-hidden mb-8">
+        <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Activity className="w-4 h-4 text-primary" />
+            <span className="text-sm font-semibold text-on-surface">{t('config.editableConfig')}</span>
+          </div>
+        </div>
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="block text-xs font-label text-on-surface-variant font-medium">Default Model</label>
+              <input 
+                type="text"
+                className="w-full bg-surface-container border border-outline-variant/50 rounded-lg p-2.5 font-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow"
+                value={editingModel}
+                onChange={e => setEditingModel(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-xs font-label text-on-surface-variant font-medium">Max Iterations (5-30)</label>
+              <input 
+                type="number"
+                min="5" max="30"
+                className="w-full bg-surface-container border border-outline-variant/50 rounded-lg p-2.5 font-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-shadow"
+                value={editingIterations}
+                onChange={e => setEditingIterations(parseInt(e.target.value) || 15)}
+              />
+            </div>
+          </div>
+          <div className="pt-2 flex justify-end">
+            <button 
+              onClick={handleSaveConfig}
+              disabled={isSaving}
+              className="btn-primary px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2"
+            >
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              {t('config.saveChanges')}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Readonly Config */}
+      <div className="panel rounded-xl overflow-hidden mb-8">
+        <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Server className="w-4 h-4 text-primary" />
+            <span className="text-sm font-semibold text-on-surface">{t('config.readonlyConfig')}</span>
+          </div>
+        </div>
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-1">
+              <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Gateway URL</label>
+              <div className="font-mono text-sm text-on-surface bg-surface-container px-3 py-2 rounded border border-outline-variant/50 break-all text-on-surface-variant">
+                {config?.readonly.litellm_base_url || t('config.notConfigured')}
               </div>
             </div>
 
             <div className="space-y-1">
               <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">API Key Status</label>
-              <div>
-                {config?.has_api_key ? (
+              <div className="pt-1">
+                {config?.readonly.has_api_key ? (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-green-500/10 border border-green-500/20 text-green-700 font-medium text-xs">
                     <Check className="w-3.5 h-3.5" />
-                    已配置 Virtual Key
+                    {t('config.virtualKeyConfigured')}
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-700 font-medium text-xs">
                     <Info className="w-3.5 h-3.5" />
-                    未配置 Virtual Key
+                    {t('config.virtualKeyNotConfigured')}
                   </span>
                 )}
               </div>
@@ -133,30 +290,9 @@ export function AgentConfig() {
         </div>
       </div>
 
-      {/* Agent Strategy */}
-      <div className="mt-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300">
-        <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center gap-3">
-          <ShieldCheck className="w-4 h-4 text-primary" />
-          <span className="text-sm font-semibold text-on-surface">Agent 执行策略</span>
-        </div>
-
-        <div className="p-6 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-1">
-              <label className="block text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">
-                Max Iterations
-              </label>
-              <div className="font-mono text-sm text-on-surface bg-surface-container px-3 py-2 rounded border border-outline-variant/50">
-                {config?.max_iterations || 15}
-              </div>
-              <p className="text-xs text-on-surface-variant">最大循环思考次数。</p>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Diagnostics Sandbox Section */}
-      <div className="mt-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300">
+      <div className="mb-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300">
         <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Terminal className="w-4 h-4 text-primary" />
@@ -233,7 +369,7 @@ export function AgentConfig() {
       </div>
 
       {/* System Prompt Read-Only Panel */}
-      {config?.system_prompt && (
+      {config?.readonly.system_prompt && (
         <div className="mt-8 panel rounded-xl overflow-hidden animate-in fade-in duration-300">
           <div className="px-6 py-4 border-b border-outline-variant bg-surface-container-low flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -255,7 +391,7 @@ export function AgentConfig() {
                 {t('config.promptPreviewDesc')}
               </p>
               <pre className="p-4 rounded-xl border border-outline-variant bg-surface-dim overflow-x-auto text-[11px] font-mono text-on-surface leading-relaxed whitespace-pre select-all max-h-[350px] overflow-y-auto">
-                <code>{config.system_prompt}</code>
+                <code>{config.readonly.system_prompt}</code>
               </pre>
             </div>
           )}
@@ -264,4 +400,3 @@ export function AgentConfig() {
     </div>
   );
 }
-
