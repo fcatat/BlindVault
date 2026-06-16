@@ -35,11 +35,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip && \
     rm -rf /var/lib/apt/lists/*
 
-# 2. 安装 Kubernetes 命令行工具 kubectl（自适应 CPU 架构，使用阿里云镜像）
+# 2. 安装 Kubernetes 命令行工具 kubectl（自适应 CPU 架构）
 RUN arch=$(uname -m) && \
     if [ "$arch" = "x86_64" ]; then arch="amd64"; fi && \
     if [ "$arch" = "aarch64" ]; then arch="arm64"; fi && \
-    curl -fsSL -o /usr/local/bin/kubectl "https://mirrors.aliyun.com/kubernetes/release/v1.30.0/bin/linux/${arch}/kubectl" && \
+    curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.30.0/bin/linux/${arch}/kubectl" && \
     chmod +x /usr/local/bin/kubectl
 
 # 3. 安装沙箱 RPC 服务极简依赖
