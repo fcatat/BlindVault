@@ -226,6 +226,10 @@ async def list_secrets_endpoint(x_user_id: str = Header("system")):
                 except:
                     allowed_destinations = []
                     
+                max_reads = a.get("max_reads", 1)
+                read_count = a.get("read_count", 0)
+                reads_left = max(0, max_reads - read_count)
+                    
                 result.append(SecretMetadataResponse(
                     secret_ref=a["secret_ref"],
                     label=a["label"],
@@ -233,7 +237,7 @@ async def list_secrets_endpoint(x_user_id: str = Header("system")):
                     allowed_tools=allowed_tools,
                     allowed_destinations=allowed_destinations,
                     expires_at=a["expires_at"],
-                    reads_left=0,
+                    reads_left=reads_left,
                     status=SecretStatus(status_str)
                 ))
     except Exception as e:

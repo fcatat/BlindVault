@@ -90,6 +90,16 @@ class SecretStore:
         """
         key = self._key(secret_ref)
         new_count = await self._redis.hincrby(key, "read_count", 1)
+        
+        status_val = await self._redis.hget(key, "status")
+        if status_val:
+            status_str = status_val.decode() if isinstance(status_val, bytes) else status_val
+            try:
+                from blindvault_agent.security.pg_archive import update_archive_status
+                await update_archive_status(secret_ref, status_str, read_count=new_count)
+            except Exception as e:
+                logger.error(f"PG 写入失败 (increment_read_count hook): {e}")
+                
         return new_count
 
     async def revoke_secret(self, secret_ref: str) -> bool:
