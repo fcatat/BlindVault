@@ -212,6 +212,13 @@ async def _secure_shell_async(
             final_command = final_command.replace(match.group(0), val)
         except Exception as e:
             logger.exception("解析多凭证占位符异常: ref=%s", ref)
+            return {
+                "status": "error",
+                "reason": f"内联凭证解析失败 ({ref}): {str(e)}",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+            }
 
     # 模式二：支持命令行中直接出现的 sec_live_xxx 引用
     pattern_raw = re.compile(r"\b(sec_(?:live|test)_[A-Za-z0-9_-]+)\b")
@@ -238,6 +245,13 @@ async def _secure_shell_async(
             final_command = final_command.replace(ref, val)
         except Exception as e:
             logger.exception("解析多凭证直连引用异常: ref=%s", ref)
+            return {
+                "status": "error",
+                "reason": f"原始凭证解析失败 ({ref}): {str(e)}",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+            }
 
     # 1. 检查危险命令 (不管是命令替换前还是替换后，均进行敏感拦截)
     danger = _is_dangerous(final_command)

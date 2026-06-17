@@ -1,5 +1,12 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-17 14:04 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复内联凭据解析失败被静默吞掉导致 SSH Permission Denied 的 Bug
+- 完成度：done
+- 动作明细：
+  - 修复 `blindvault_agent/tools/secure_shell.py`：当正则匹配提取出的 `{{secret:sec_xxx}}` 等内联凭证在向金库（Redis）发起 `resolve_secret` 时发生异常（如凭证已过期 TTL=15min），取消原先的 `logger.exception` 静默忽略策略，改为直接硬阻断并返回 `"status": "error", "reason": "内联凭证解析失败..."`。避免失效凭证变成原样明文传给下层导致莫名其妙的 `exit_code: 5` (Permission denied)。
+  - 修复 `frontend/src/components/Chat.tsx`：当大模型将凭证内置在 `command` 字符串内而未显式传入 `secret_ref` 参数时，右侧审计栏不再错误显示硬编码的 `sec_live_default_ref` 假数据，改为从 `command` 中利用正则提取真实的 `sec_xxx` 进行展示。
+
 ## 2026-06-17 12:06 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：解决 SSH Exit Code 5 问题（非交互式 StrictHostKeyChecking 阻塞）
 - 完成度：done
