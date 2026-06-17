@@ -134,7 +134,7 @@ local_model_disable_cot: bool = True
 落 .env：`BLINDVAULT_LOCAL_MODEL_URL` 等。
 
 ### 端点（B 段加，`blindvault_agent/web.py`）
-- `GET /api/local-model/config` → 返回当前配置（连同 `is_ee` 状态）
+- `GET /api/local-model/config` → 返回当前配置（连同 `is_ee` 状态，prompt 字段返回完整内容（区别于 #33 Agent Config 的生产系统提示词，本地模型 prompt 非安全策略））
 - `PUT /api/local-model/config` → 更新配置（必须 require_ee）
 - `POST /api/local-model/check` → 健康检查（连通性 + 模型列表，复用旧 `check_model_health`）
 

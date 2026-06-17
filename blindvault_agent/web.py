@@ -37,6 +37,9 @@ async def lifespan(app: FastAPI):
     from blindvault_agent.security.pg_archive import init_archive_db
     await init_archive_db(settings.database_url)
 
+    from blindvault_agent.security.audit import init_audit_db
+    await init_audit_db()
+
     async with AsyncRedisSaver.from_conn_string(settings.redis_url) as checkpointer:
         await checkpointer.setup()
         agent = create_blindvault_agent(
@@ -62,6 +65,18 @@ import json
 @app.get("/api/chat/stream")
 async def chat_stream_endpoint(message: str, thread_id: str):
     config = {"configurable": {"thread_id": thread_id}}
+    
+    try:
+        from blindvault_agent.security.audit import log_event
+        await log_event(
+            actor="system",
+            action="agent.run.start",
+            target_type="thread",
+            target_id=thread_id,
+            details={"thread_id": thread_id, "command_preview": message[:50]}
+        )
+    except Exception:
+        pass
     
     async def event_generator():
         try:
@@ -131,6 +146,18 @@ async def chat_stream_endpoint(message: str, thread_id: str):
             else:
                 yield f"data: {json.dumps({'type': 'done', 'data': {}})}\n\n"
                 
+            try:
+                from blindvault_agent.security.audit import log_event
+                await log_event(
+                    actor="system",
+                    action="agent.run.complete",
+                    target_type="thread",
+                    target_id=thread_id,
+                    details={"thread_id": thread_id, "command_preview": message[:50]}
+                )
+            except Exception:
+                pass
+                
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -165,6 +192,18 @@ async def approve_endpoint(req: ApproveRequest):
                 
         sanitized_count = getattr(agent.sanitize_mw, "sanitize_count", 0)
         
+        try:
+            from blindvault_agent.security.audit import log_event
+            await log_event(
+                actor="system",
+                action=f"hitl.{req.decision}",
+                target_type="thread",
+                target_id=req.thread_id,
+                details={"thread_id": req.thread_id, "decision": req.decision}
+            )
+        except Exception:
+            pass
+
         return {
             "status": "done",
             "reply": reply,
@@ -337,6 +376,17 @@ async def create_sanitize_rule(req: RuleCreateRequest):
     await store.save_rule(rule)
     
     logger.info("审计 - [创建规则] ID=%s name=%s pattern_hash=%s", rule.id, rule.name, _hash_pattern(rule.pattern))
+    try:
+        from blindvault_agent.security.audit import log_event
+        await log_event(
+            actor="system",
+            action="rule.create",
+            target_type="rule",
+            target_id=rule.id,
+            details={"pattern_hash": _hash_pattern(rule.pattern)}
+        )
+    except Exception:
+        pass
     return rule
 
 @app.put("/api/sanitize-rules/{rule_id}")
@@ -373,6 +423,17 @@ async def update_sanitize_rule(rule_id: str, req: RuleUpdateRequest):
     
     new_pattern_hash = _hash_pattern(rule.pattern)
     logger.info("审计 - [更新规则] ID=%s name=%s old_pattern_hash=%s new_pattern_hash=%s", rule.id, rule.name, old_pattern_hash, new_pattern_hash)
+    try:
+        from blindvault_agent.security.audit import log_event
+        await log_event(
+            actor="system",
+            action="rule.update",
+            target_type="rule",
+            target_id=rule.id,
+            details={"pattern_hash": new_pattern_hash}
+        )
+    except Exception:
+        pass
     return rule
 
 @app.delete("/api/sanitize-rules/{rule_id}")
@@ -386,6 +447,17 @@ async def delete_sanitize_rule(rule_id: str):
     pattern_hash = _hash_pattern(rule.pattern)
     await store.delete_rule(rule_id)
     logger.info("审计 - [删除规则] ID=%s name=%s pattern_hash=%s", rule.id, rule.name, pattern_hash)
+    try:
+        from blindvault_agent.security.audit import log_event
+        await log_event(
+            actor="system",
+            action="rule.delete",
+            target_type="rule",
+            target_id=rule.id,
+            details={"pattern_hash": pattern_hash}
+        )
+    except Exception:
+        pass
     return {"status": "success"}
 
 @app.post("/api/sanitize-rules/restore-defaults")
@@ -605,6 +677,22 @@ async def update_agent_config(req: AgentConfigUpdate):
     # 清除单例缓存以重新加载
     get_agent_settings.cache_clear()
     
+    try:
+        from blindvault_agent.security.audit import log_event
+        updates = {}
+        if req.default_model is not None: updates["default_model"] = req.default_model
+        if req.max_iterations is not None: updates["max_iterations"] = req.max_iterations
+        if updates:
+            await log_event(
+                actor="system",
+                action="config.update",
+                target_type="config",
+                target_id="agent_config",
+                details=updates
+            )
+    except Exception:
+        pass
+
     return await get_agent_config()
 
 class SandboxStatusResponse(BaseModel):
@@ -741,11 +829,6 @@ async def get_local_model_config():
     from blindvault_agent.ee.local_model.settings import get_local_model_settings
     
     settings = get_local_model_settings()
-    
-    # 截断系统提示词
-    prompt_preview = settings.local_model_prompt
-    if prompt_preview and len(prompt_preview) > 200:
-        prompt_preview = prompt_preview[:200] + "..."
         
     return {
         "is_ee": is_ee(),
@@ -753,7 +836,7 @@ async def get_local_model_config():
         "model_name": settings.local_model_name,
         "api_type": settings.local_model_api_type,
         "timeout": settings.local_model_timeout,
-        "prompt": prompt_preview,
+        "prompt": settings.local_model_prompt,
         "disable_cot": settings.local_model_disable_cot
     }
 
@@ -814,6 +897,27 @@ async def check_local_model(req: LocalModelCheckRequest):
         return res
     except Exception as e:
         return {"available": False, "error": str(e)}
+
+@app.get("/api/audit-log")
+async def get_audit_log(
+    actor: str | None = None,
+    action: str | None = None,
+    target_type: str | None = None,
+    ts_from: str | None = None,
+    ts_to: str | None = None,
+    limit: int = 100,
+    offset: int = 0
+):
+    from blindvault_agent.security.audit import list_events
+    filters = {}
+    if actor: filters["actor"] = actor
+    if action: filters["action"] = action
+    if target_type: filters["target_type"] = target_type
+    if ts_from: filters["ts_from"] = ts_from
+    if ts_to: filters["ts_to"] = ts_to
+    
+    items, total = await list_events(filters, limit, offset)
+    return {"items": items, "total": total}
 
 """
 测试命令：

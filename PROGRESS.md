@@ -1,5 +1,38 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-17 11:41 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：小修补 - 本地模型 prompt 字段截断 bug
+- 完成度：done
+- 动作明细：
+  - 修改 `blindvault_agent/web.py`，去除了 `get_local_model_config` 接口中错误复制自 Agent Config 的 prompt 200 字符截断逻辑，直接返回完整的 `local_model_prompt`。
+  - 更新了 `docs/task-40-local-model-ee.md` 第五节的说明，明确标注 "prompt 字段返回完整内容（区别于 #33 Agent Config 的生产系统提示词，本地模型 prompt 非安全策略）"。
+  - 重启了 backend 容器，本地验证 API 响应结构恢复正常。
+
+## 2026-06-17 11:25 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：本地启动企业版 + 修菜单点击
+- 完成度：done
+- 动过的文件：
+  - `.env`：追加了 `BLINDVAULT_EE_LICENSE=dev-trial` 激活本地企业版，严格遵循铁律 6（只走 .env 配置不走 UI 暴露）。
+  - `frontend/src/api.ts`：将 `checkEEStatus` 接口指向真实的 `/api/local-model/config`，通过获取 `is_ee` 字段来判定 `licensed` 状态，替代了原有的兜底占位，从而正确解锁 Local Model Gateway 配置页。
+- 动作明细：
+  - 排查确认 `Sidebar.tsx` 中 `EnterpriseNavItem` 的锁定状态与非锁定状态均已正确绑定 `onClick={onClick}`，且并未残留 `disabled` class。通过将状态同步接通真实接口，使得 EnterprisePlaceholder 锁屏与真页面都能被顺利点击访问。
+  - 完成了 `.env` 的更新，并执行了 `docker-compose restart backend` 与 `frontend`，配置已全面生效。
+- 验收结果：本地访问 /api/local-model/config 成功返回 is_ee=true。前端刷新页面后，所有开源菜单均恢复点击，且 Local Model Gateway 能正常展示企业版配置面板；其余企业版功能在点击时可正常显示 EnterprisePlaceholder 锁屏界面。请进行验证。
+
+## 2026-06-17 10:41 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：执行 #37 审计日志（用户不可删）
+- 完成度：done
+- 动过的文件：
+  - `blindvault_agent/security/audit.py`：新建文件，实现 `audit_log` 物理表创建与写入、查询逻辑。通过 `try-except` 包裹所有 DB 操作，确保写入失败不影响主流程。
+  - `blindvault_agent/security/redis_store.py`：注入 `secret.create`, `secret.revoke/expire/exhaust` 操作的事件埋点。
+  - `blindvault_agent/security/policy.py`：注入 `secret.read` 事件埋点。
+  - `blindvault_agent/web.py`：注入 `rule.create/update/delete`, `config.update`, `agent.run.start/complete` 以及 HITL 的 `approve/reject` 埋点。新增 `GET /api/audit-log` 端点。不提供任何删除/修改端点。
+  - `frontend/src/components/AuditLog.tsx`：新增前端只读审计视图。
+  - `frontend/src/components/Sidebar.tsx`：将「审计日志」移除 `PRO` 企业版限制，放置到核心功能列表中。
+  - `frontend/src/agentApi.ts` & `frontend/src/i18n.tsx`：追加接口与翻译。
+- 安全检查结论：未提供任何形式的 `DELETE`/`PUT` 端点。记录到 `details` 的指令经过截断，无明文泄露，满足合规要求。
+- 验收结果：本地 docker-compose 构建通过，系统各项功能工作正常。
+
 ## 2026-06-16 18:00 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：执行 #40 任务 B 段：把本地模型接入主层 + API + 前端
 - 完成度：**待复审 (Pending Review)**
