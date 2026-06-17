@@ -329,10 +329,14 @@ def _parse_model_output(
             continue
         seen_values.add(value)
 
+        label = str(item.get("label", "")).strip()
+        if not label.startswith("model_"):
+            label = f"model_{label}" if label else f"model_{secret_type}"
+
         results.append(DetectedSecret(
             value=value,
             secret_type=secret_type,
-            label=label or f"model_{secret_type}",
+            label=label,
         ))
 
     return results

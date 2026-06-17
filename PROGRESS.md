@@ -1,5 +1,13 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-17 12:00 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：修复本地模型提取凭证在 UI 缺少标识的 Bug
+- 完成度：done
+- 动作明细：
+  - 排查发现前端 `Chat.tsx` 中的标识显示逻辑依赖 `secretInfo.label.startsWith('model_')`
+  - 修改了 `blindvault_agent/ee/local_model/client.py` 的解析过滤逻辑，强制将大模型吐出的 label 前缀加上 `model_`，解决因为模型自定义简短描述导致前端无法判断是否由语义模型识别出的问题。
+  - 重启 backend 容器并提交了修复。
+
 ## 2026-06-17 11:41 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：小修补 - 本地模型 prompt 字段截断 bug
 - 完成度：done
