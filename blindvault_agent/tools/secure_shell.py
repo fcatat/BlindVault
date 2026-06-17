@@ -307,6 +307,11 @@ async def _secure_shell_async(
         elif "connection refused" in stderr_lower or "timeout" in stderr_lower or "port 22" in stderr_lower:
             diag = "\n\n[BlindVault 诊断助手]: 系统检测到网络连接或端口连通异常。建议执行 'ping -c 3 <目标IP>' 或 'nc -w 3 -z <目标IP> <端口>' 探测远程主机状态。"
             stderr += diag
+            
+        elif "host key verification failed" in stderr_lower or exit_code == 5:
+            diag = "\n\n[BlindVault 诊断助手]: SSH 主机密钥确认失败。沙箱为非交互模式，请重试并在 SSH 命令中增加 '-o StrictHostKeyChecking=no'。"
+            if "host key verification failed" in stderr_lower or ("ssh" in final_command.lower() and exit_code == 5):
+                stderr += diag
 
         return {
             "status": "success" if exit_code == 0 else "error",

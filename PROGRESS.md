@@ -1,5 +1,13 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-17 12:06 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：解决 SSH Exit Code 5 问题（非交互式 StrictHostKeyChecking 阻塞）
+- 完成度：done
+- 动作明细：
+  - 更新了 `blindvault_agent/config.py` 中的 Agent System Prompt，明确要求 LLM 在生成 ssh/scp 命令时必须附带 `-o StrictHostKeyChecking=no` 参数，以跳过沙箱中首次连接时的非交互式主机指纹确认。
+  - 在 `blindvault_agent/tools/secure_shell.py` 中增加了针对 Exit Code 5 或 "host key verification failed" 的后置诊断信息增强，使得发生相关错误时 Agent 能看懂并获得更清晰的修改重试建议。
+  - 重启 backend。
+
 ## 2026-06-17 12:00 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：修复本地模型提取凭证在 UI 缺少标识的 Bug
 - 完成度：done
