@@ -291,6 +291,12 @@ class ReversibleSanitizeMiddleware(AgentMiddleware):
             rebuild_content,
             rebuild_tool_calls,
         )
+        try:
+            from blindvault_agent.ee import is_ee
+            from blindvault_agent.ee.local_model.settings import get_local_model_settings
+            self._use_local_model_cache = is_ee() and bool(get_local_model_settings().local_model_url)
+        except ImportError:
+            self._use_local_model_cache = False
 
         messages = list(state.get("messages", []))
         modified = False

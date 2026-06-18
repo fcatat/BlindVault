@@ -1,5 +1,13 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-18 15:12 — Antigravity (Gemini 3.1 Pro)
+- 当前任务：回滚正则硬编码，修复本地模型（EE功能）脱敏拦截状态在 UI 前端徽章不显示的问题。
+- 完成度：done
+- 动作明细：
+  - 响应需求，回滚了之前在 `blindvault_agent/middleware/reversible_sanitize.py` 及 Redis 中针对“就叫”添加的 `auto_cn_password` 补丁。
+  - 修复了 `ReversibleSanitizeMiddleware.before_model` 中未正确设置 `_use_local_model_cache` 的 Bug，导致虽然本地模型成功识别出密码并完成了脱敏，但向前端抛出的流式事件 `end` 中 `local_model_configured` 字段始终为 `False`，导致前端侧边栏不显示“由本地模型提取”的绿色徽章。
+  - 注意：因之前重启过后容器内部 `.env` 文件被覆盖，已通过 `curl` 手动重设了测试机的 `local_model_url` 以便验证。
+  - 优化 `blindvault_agent/config.py` 中的系统提示词，明确指导大模型正确设置 `secret_ref` 参数（传入完整的 `sec_xxx`），以防大模型在参数留空时误将密码明文传给下层。
 ## 2026-06-17 14:04 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：修复内联凭据解析失败被静默吞掉导致 SSH Permission Denied 的 Bug
 - 完成度：done
