@@ -126,20 +126,6 @@ collect_config() {
   else
     success "Mirror source: official (deb.debian.org / npmjs / pypi)"
   fi
-
-  # Edition
-  echo ""
-  info "Edition ${DIM}(Enterprise unlocks the local-model sanitization gateway)${NC}"
-  ask "Enable Enterprise edition? [y/N]" "N" EE_INPUT
-  case "$EE_INPUT" in
-    [Yy]*) EE_LICENSE="enabled" ;;
-    *)     EE_LICENSE="" ;;
-  esac
-  if [ -n "$EE_LICENSE" ]; then
-    success "Edition: Enterprise (EE features unlocked)"
-  else
-    success "Edition: Community"
-  fi
 }
 
 # ============================================================
@@ -188,10 +174,6 @@ BACKEND_PORT=${BACKEND_PORT}
 
 # Build mirror source (true = China mirrors for faster image builds)
 USE_CN_MIRROR=${USE_CN_MIRROR}
-
-# Edition: a non-empty value unlocks Enterprise features (local-model gateway).
-# Operator-controlled only (this .env). Leave blank for Community edition.
-BLINDVAULT_EE_LICENSE=${EE_LICENSE}
 
 # LLM gateway (LiteLLM) — the API key lives ONLY here, never in the UI.
 # The default model can also be changed later in Web UI → Agent Config.

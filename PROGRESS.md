@@ -1,5 +1,15 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-22 架构决策：取消开源版/企业版区分，全功能开放，商业化只做售后
+**决策说明**：不再区分社区版与企业版（EE），所有功能（含本地模型语义脱敏网关）对所有用户开放。盈利点改为**售后/技术支持（部署、升级、SLA、合规背书）**，软件保持 AGPL-3.0 全开源。
+**落地改动**：
+- 后端 `ee/__init__.py`：`is_ee()` 恒返回 True、`require_ee()` 空操作（保留函数以兼容历史调用方，门禁永久放行）；本地模型脱敏现在只看是否配置 `local_model_url`。
+- `install.sh` / `.env.example`：移除"版本选择"交互与 `BLINDVAULT_EE_LICENSE`。
+- 前端：本地模型网关移入核心功能；原 PRO 区块改为「Roadmap / 开发中」不可点（SSO/多模型/策略引擎/硬件设备仍是占位）；移除 `EEStatus`/`checkEEStatus`/锁屏 UI 与 LocalModelConfig 的企业版 banner。
+- README 中英文：改为"全功能开源 + 售后收费"定位，新增「许可与支持」段。
+- `ee` 远程仓库（BlindVault-ee）后续可废弃，统一到 origin。
+- 前端 `vite build` 通过。
+
 ## 2026-06-22 14:30 — Cursor (Claude Opus 4.8)
 - 当前任务：对齐 README + 修复 docker 一键启动 + 前端生产构建 + 镜像源/版本可选
 - 完成度：done（已提交部署/文档部分，见下"提交"）

@@ -11,7 +11,6 @@ import { EnterprisePlaceholder } from './components/EnterprisePlaceholder';
 import { AuditLog } from './components/AuditLog';
 import { AddCredentialModal } from './components/AddCredentialModal';
 import { ViewState } from './types';
-import { checkEEStatus, type EEStatus } from './api';
 
 
 function generateSessionId(): string {
@@ -30,20 +29,6 @@ export default function App() {
   const [activeView, setActiveView] = useState<ViewState>('chat');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [eeStatus, setEeStatus] = useState<EEStatus | null>(null);
-
-  // 加载企业版 License 状态
-  useEffect(() => {
-    async function loadEE() {
-      try {
-        const status = await checkEEStatus();
-        setEeStatus(status);
-      } catch (e) {
-        console.error('加载企业版 License 失败:', e);
-      }
-    }
-    loadEE();
-  }, []);
 
   // Session management
   const [sessions, setSessions] = useState<SessionInfo[]>(() => {
@@ -128,7 +113,6 @@ export default function App() {
         onSelectSession={setActiveSessionId}
         onNewSession={handleNewSession}
         onDeleteSession={handleDeleteSession}
-        eeStatus={eeStatus}
       />
       
       <div className="flex-1 flex flex-col md:ml-64 relative bg-background h-screen overflow-hidden">
@@ -152,10 +136,11 @@ export default function App() {
           {activeView === 'config' && <AgentConfig />}
 
 
-          {/* 企业版独立路由页面 */}
           {activeView === 'local_model' && <LocalModelConfig />}
-          {activeView === 'sso' && <EnterprisePlaceholder viewType="sso" />}
           {activeView === 'audit' && <AuditLog />}
+
+          {/* Roadmap 占位页：侧边栏不可点，仅保留路由兜底 */}
+          {activeView === 'sso' && <EnterprisePlaceholder viewType="sso" />}
           {activeView === 'multi_model' && <EnterprisePlaceholder viewType="multi_model" />}
           {activeView === 'policy' && <EnterprisePlaceholder viewType="policy" />}
           {activeView === 'hardware' && <EnterprisePlaceholder viewType="hardware" />}

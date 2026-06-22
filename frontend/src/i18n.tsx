@@ -26,6 +26,7 @@ const translations = {
     'sidebar.policyEngine': '策略引擎',
     'sidebar.comingSoon': '即将推出',
     'sidebar.contactSales': '联系销售',
+    'sidebar.roadmap': '开发中',
 
     // Header
     'header.searchPlaceholder': '搜索凭证库...',
@@ -394,6 +395,7 @@ const translations = {
     'sidebar.policyEngine': 'Policy Engine',
     'sidebar.comingSoon': 'Coming Soon',
     'sidebar.contactSales': 'Contact Sales',
+    'sidebar.roadmap': 'Roadmap',
 
     // Header
     'header.searchPlaceholder': 'Search Vault...',

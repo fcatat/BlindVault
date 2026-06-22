@@ -1,11 +1,10 @@
 import React from 'react';
 import { ViewState } from '../types';
 import { useI18n } from '../i18n';
-import { EEStatus } from '../api';
 import { 
   ShieldAlert, Plus, MessageSquare, Key, SquareTerminal, 
   Bot, FileText, FileBadge, PlusCircle, Trash2,
-  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Crown, Sparkles, Image, EyeOff
+  Lock, Cpu, ClipboardList, Users, Layers, Server, ShieldCheck, Image, EyeOff
 } from 'lucide-react';
 
 
@@ -24,13 +23,11 @@ interface SidebarProps {
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
-  eeStatus: EEStatus | null;
 }
 
 export function Sidebar({ 
   activeView, onNavigate, onOpenModal,
   sessions, activeSessionId, onSelectSession, onNewSession, onDeleteSession,
-  eeStatus,
 }: SidebarProps) {
   const { t, locale } = useI18n();
   const isZh = locale === 'zh';
@@ -129,56 +126,23 @@ export function Sidebar({
           isActive={activeView === 'audit'}
           onClick={() => onNavigate('audit')}
         />
-
-
-        {/* Enterprise Section */}
-        <div className="pt-5 pb-1 px-2">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">{t('sidebar.enterprise')}</span>
-            <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-700 border border-amber-500/30">
-              <Crown className="w-2.5 h-2.5 inline-block mr-0.5 -mt-0.5" />
-              PRO
-            </span>
-          </div>
-        </div>
-
-        <EnterpriseNavItem 
+        <NavItem 
           icon={<Cpu className="w-4 h-4" />} 
           label={t('sidebar.localModelGateway')}
-          licensed={!!eeStatus?.licensed}
           isActive={activeView === 'local_model'}
           onClick={() => onNavigate('local_model')}
         />
-        <EnterpriseNavItem 
-          icon={<Users className="w-4 h-4" />} 
-          label={t('sidebar.userManagement')}
-          sublabel="SSO / LDAP / OIDC"
-          licensed={!!eeStatus?.licensed}
-          isActive={activeView === 'sso'}
-          onClick={() => onNavigate('sso')}
-        />
 
-        <EnterpriseNavItem 
-          icon={<Layers className="w-4 h-4" />} 
-          label={t('sidebar.multiModel')}
-          licensed={!!eeStatus?.licensed}
-          isActive={activeView === 'multi_model'}
-          onClick={() => onNavigate('multi_model')}
-        />
-        <EnterpriseNavItem 
-          icon={<ShieldCheck className="w-4 h-4" />} 
-          label={t('sidebar.policyEngine')}
-          licensed={!!eeStatus?.licensed}
-          isActive={activeView === 'policy'}
-          onClick={() => onNavigate('policy')}
-        />
-        <EnterpriseNavItem 
-          icon={<Server className="w-4 h-4" />} 
-          label={t('sidebar.hardwareAppliance')}
-          licensed={!!eeStatus?.licensed}
-          isActive={activeView === 'hardware'}
-          onClick={() => onNavigate('hardware')}
-        />
+
+        {/* Roadmap Section (not yet available) */}
+        <div className="pt-5 pb-1 px-2">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">{t('sidebar.roadmap')}</span>
+        </div>
+
+        <RoadmapNavItem icon={<Users className="w-4 h-4" />} label={t('sidebar.userManagement')} sublabel="SSO / LDAP / OIDC" />
+        <RoadmapNavItem icon={<Layers className="w-4 h-4" />} label={t('sidebar.multiModel')} />
+        <RoadmapNavItem icon={<ShieldCheck className="w-4 h-4" />} label={t('sidebar.policyEngine')} />
+        <RoadmapNavItem icon={<Server className="w-4 h-4" />} label={t('sidebar.hardwareAppliance')} />
       </div>
 
       {/* Footer */}
@@ -214,46 +178,19 @@ function NavItem({ icon, label, isActive, onClick }: { icon: React.ReactNode, la
   );
 }
 
-function EnterpriseNavItem({ 
-  icon, label, sublabel, licensed, isActive, onClick 
+function RoadmapNavItem({ 
+  icon, label, sublabel
 }: { 
   icon: React.ReactNode, 
   label: string, 
   sublabel?: string,
-  licensed: boolean,
-  isActive: boolean,
-  onClick?: () => void
 }) {
   const { t } = useI18n();
 
-  if (licensed) {
-    if (isActive) {
-      return (
-        <div 
-          className="flex items-center gap-3 bg-amber-500/10 text-amber-800 dark:text-amber-400 border border-amber-500/20 rounded px-4 py-2 cursor-pointer transition-all duration-200 font-semibold"
-          onClick={onClick}
-        >
-          <span className="text-amber-500">{icon}</span>
-          <span className="text-sm">{label}</span>
-        </div>
-      );
-    }
-    return (
-      <div 
-        className="flex items-center gap-3 text-on-surface-variant px-4 py-2 hover:bg-amber-500/5 hover:text-amber-700 transition-all duration-200 cursor-pointer active:opacity-80 rounded"
-        onClick={onClick}
-      >
-        <span className="text-on-surface-variant/80">{icon}</span>
-        <span className="text-sm">{label}</span>
-      </div>
-    );
-  }
-
   return (
     <div 
-      className="group relative flex items-center gap-3 text-on-surface-variant/50 px-4 py-2 rounded cursor-pointer transition-all duration-200 hover:bg-surface-container-low"
+      className="relative flex items-center gap-3 text-on-surface-variant/50 px-4 py-2 rounded cursor-not-allowed select-none"
       title={t('sidebar.comingSoon')}
-      onClick={onClick}
     >
       <span className="opacity-40">{icon}</span>
       <div className="flex-1 min-w-0">
@@ -264,11 +201,6 @@ function EnterpriseNavItem({
         {sublabel && (
           <span className="text-[10px] opacity-40 font-mono">{sublabel}</span>
         )}
-      </div>
-      {/* Hover tooltip */}
-      <div className="absolute left-full ml-2 top-1/2 -translate-y-1/2 px-3 py-2 bg-inverse-surface text-inverse-on-surface text-xs rounded-lg shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-50">
-        <Sparkles className="w-3 h-3 inline-block mr-1 -mt-0.5 text-amber-400" />
-        {t('sidebar.enterpriseBadge')}
       </div>
     </div>
   );

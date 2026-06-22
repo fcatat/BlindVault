@@ -38,7 +38,7 @@ BlindVault is built on top of a mature agent framework (**LangChain `create_agen
                         │   ▸ Interception A — outbound sanitize         │
                         │       ReversibleSanitizeMiddleware  (→ vault)  │
                         │         · regex rules (configurable, Redis)    │
-                        │         · local-model semantic pass (EE)       │
+                        │         · local-model semantic pass (optional) │
                         │   ▸ Interception B — execution                 │
                         │       HITL approval (high-risk pause/resume)   │
                         │       secure_shell → sandbox (resolve at exec) │
@@ -55,7 +55,7 @@ BlindVault is built on top of a mature agent framework (**LangChain `create_agen
 
 **Two rules cover the whole design:**
 
-- **Interception A** — everything flowing *to* the model must be secret-free. Secrets are detected (configurable regex rules + an optional EE local-model semantic pass), encrypted into the vault, and replaced with `{{secret:sec_xxx}}` *before* the request leaves the agent (and before it is ever checkpointed).
+- **Interception A** — everything flowing *to* the model must be secret-free. Secrets are detected (configurable regex rules + an optional local-model semantic pass), encrypted into the vault, and replaced with `{{secret:sec_xxx}}` *before* the request leaves the agent (and before it is ever checkpointed).
 - **Interception B** — at execution time the placeholder is resolved back to the real secret inside `secure_shell` and run in an isolated **sandbox**; high-risk commands pause for human approval first.
 
 **Single-layer defense in the app, gateway backstop on the roadmap.** BlindVault deliberately runs a **single reversible sanitizer** in-app (the irreversible PII backstop was removed — it mostly caused false positives that hurt usability). The non-reversible "block if anything slips through" backstop belongs at the outermost **LiteLLM gateway layer** (an independent process); that is on the roadmap, and the legacy in-app `pii_backstop.py` is kept *deprecated* for reference only.
@@ -68,7 +68,7 @@ BlindVault is built on top of a mature agent framework (**LangChain `create_agen
 |---------|-------------|
 | 🔒 **Zero-knowledge secret protection** | Passwords / tokens / connection strings auto-detected, AES-256-GCM encrypted into the vault, replaced with reversible `{{secret:sec_xxx}}` placeholders. The model only ever sees placeholders. |
 | ⚙️ **Configurable detection rules** | The reversible sanitizer's regex rules live in Redis (seeded with sensible defaults). Manage them via the UI — create / edit / delete / restore-defaults, with an AI-assisted rule generator and a live match tester. |
-| 🧬 **Local-model semantic sanitization (EE)** | Beyond regex, an optional **on-prem local model** does a semantic pass to catch credentials that patterns miss — and the secret value never leaves your network. Gated behind an enterprise license. |
+| 🧬 **Local-model semantic sanitization** | Beyond regex, an optional **on-prem local model** (e.g. Ollama + Qwen) does a semantic pass to catch credentials that patterns miss — and the secret value never leaves your network. Just point it at a local model URL; no license needed. |
 | ✋ **Human-in-the-loop approval** | High-risk commands (`DROP`, `rm -rf`, `TRUNCATE`, `docker rm`, …) pause the run for explicit human approve/reject. The high-risk list is configurable. Durable pause/resume via the Redis checkpointer — survives restarts. |
 | 🏝️ **Sandboxed execution** | Commands run in an isolated sandbox service over HTTP, never on the host. **Fail-closed**: if no sandbox is configured, execution is refused. |
 | 🧠 **Judgment delegated to you** | The model is told *not* to refuse high-risk ops on its own; it routes them to the approval layer, where a human decides. |
@@ -126,8 +126,6 @@ BLINDVAULT_ENCRYPTION_KEY=<base64 32-byte key>
 BLINDVAULT_LITELLM_BASE_URL=https://<your-litellm-gateway>/v1
 BLINDVAULT_LITELLM_API_KEY=<your virtual key>
 BLINDVAULT_DEFAULT_MODEL=<a model alias on your gateway>   # e.g. gpt-4o / claude-sonnet
-# Optional:
-# BLINDVAULT_EE_LICENSE=<license>          # unlock EE local-model gateway
 ```
 
 > **Security rule:** the LiteLLM API key is maintained **only** in `.env` by the operator. It is never exposed or editable through any API/UI — to change it, edit `.env` and restart.
@@ -219,12 +217,16 @@ Dockerfile.sandbox           # the isolated sandbox executor image
 docker-compose.yml           # redis + postgres + sandbox + backend + frontend
 ```
 
-> **Note:** `backend/` is the pre-pivot implementation, kept for reference. The current product lives in `blindvault_agent/`. The frontend's core tabs (Credential Vault, Sanitization Rules, Agent Config, Audit Log) are wired to the new agent; the **Enterprise (PRO)** section gates licensed features — **Local Model Gateway** is functional under an EE license, while SSO / Multi-model / Policy Engine / Hardware Appliance are placeholders on the roadmap.
+> **Note:** `backend/` is the pre-pivot implementation, kept for reference. The current product lives in `blindvault_agent/`. **All features are open and available to everyone — there is no community/enterprise split.** The frontend's tabs (Credential Vault, Sanitization Rules, Agent Config, Audit Log, Local Model Gateway) are all wired to the agent; the **Roadmap** section (SSO / Multi-model / Policy Engine / Hardware Appliance) lists not-yet-built items, shown disabled.
 
 ## Roadmap
 
 - LiteLLM gateway-level guardrail as an independent network backstop (the non-reversible PII block, moved out of the app — defense in depth beyond the in-app sanitizer).
-- Enterprise: SSO / RBAC, multi-model routing policy, audit export, hardware appliance.
+- SSO / RBAC, multi-model routing policy, audit export, hardware appliance.
+
+## License & Support
+
+BlindVault is fully open source under [AGPL-3.0](LICENSE) — **every feature is free, with no paywalled "enterprise" tier**. If you need production help — deployment, upgrades, SLA-backed support, compliance sign-off — that's what we offer commercially. The software stays open; you pay only for the service.
 
 ## License
 

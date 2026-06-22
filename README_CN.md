@@ -38,7 +38,7 @@ BlindVault 构建在成熟的 Agent 框架（**LangChain `create_agent` / LangGr
                         │   ▸ 拦截点 A —— 出站脱敏                         │
                         │       ReversibleSanitizeMiddleware  (→ 金库)   │
                         │         · 正则规则（可配置，存 Redis）           │
-                        │         · 本地模型语义识别（EE）                 │
+                        │         · 本地模型语义识别（可选）               │
                         │   ▸ 拦截点 B —— 执行                            │
                         │       HITL 审批（高危暂停/恢复）                 │
                         │       secure_shell → 沙箱（执行瞬间解析密钥）     │
@@ -55,7 +55,7 @@ BlindVault 构建在成熟的 Agent 框架（**LangChain `create_agent` / LangGr
 
 **两条规则覆盖整个设计：**
 
-- **拦截点 A** —— 一切流向模型的内容必须无密码。凭证（经可配置的正则规则 + 可选的 EE 本地模型语义识别检出）在请求离开 Agent **之前**（也在被 checkpoint **之前**）就被检测、加密入金库、替换为 `{{secret:sec_xxx}}`。
+- **拦截点 A** —— 一切流向模型的内容必须无密码。凭证（经可配置的正则规则 + 可选的本地模型语义识别检出）在请求离开 Agent **之前**（也在被 checkpoint **之前**）就被检测、加密入金库、替换为 `{{secret:sec_xxx}}`。
 - **拦截点 B** —— 执行时，占位符在 `secure_shell` 内部解析回真实密钥，并在隔离的**沙箱**中运行；高危命令先暂停等人工审批。
 
 **应用内单层防御，网关兜底在路线图上。** BlindVault 刻意在应用内只跑**一层可逆脱敏**（不可逆的 PII 兜底层已移除——它在生产中主要表现为误报伤可用性）。不可逆的"漏网即阻断"兜底应归属最外围的 **LiteLLM 网关层**（独立进程），这一项在路线图上；应用内遗留的 `pii_backstop.py` 已标记 *DEPRECATED*，仅供参考。
@@ -68,7 +68,7 @@ BlindVault 构建在成熟的 Agent 框架（**LangChain `create_agent` / LangGr
 |------|------|
 | 🔒 **零知识密钥保护** | 密码 / token / 连接串自动识别，AES-256-GCM 加密入金库，替换为可逆的 `{{secret:sec_xxx}}` 占位符。模型只看得到占位符。 |
 | ⚙️ **可配置识别规则** | 可逆脱敏的正则规则存在 Redis 里（首次启动种子化默认规则）。可在 UI 中管理——新建 / 编辑 / 删除 / 恢复默认，带 AI 辅助生成规则与实时匹配测试。 |
-| 🧬 **本地模型语义脱敏（EE）** | 在正则之外，可选的**本地私有模型**做一遍语义识别，捕获正则漏掉的凭证——且密钥明文绝不离开你的内网。需企业版 license 解锁。 |
+| 🧬 **本地模型语义脱敏** | 在正则之外，可选的**本地私有模型**（如 Ollama + Qwen）做一遍语义识别，捕获正则漏掉的凭证——且密钥明文绝不离开你的内网。填入本地模型 URL 即用，无需 license。 |
 | ✋ **人工审批（HITL）** | 高危命令（`DROP`、`rm -rf`、`TRUNCATE`、`docker rm`…）暂停，等人工显式批准/拒绝。高危清单可配置。基于 Redis checkpointer 的持久化暂停-恢复，重启不丢。 |
 | 🏝️ **沙箱执行** | 命令在隔离的沙箱服务里经 HTTP 执行，绝不在宿主机上跑。**fail-closed**：未配置沙箱则拒绝执行。 |
 | 🧠 **判断权交给你** | 系统提示词要求模型**不要自己拒绝**高危操作，而是把它交给审批层，由人来定。 |
@@ -126,8 +126,6 @@ BLINDVAULT_ENCRYPTION_KEY=<base64 的 32 字节密钥>
 BLINDVAULT_LITELLM_BASE_URL=https://<你的 litellm 网关>/v1
 BLINDVAULT_LITELLM_API_KEY=<你的 virtual key>
 BLINDVAULT_DEFAULT_MODEL=<网关上的 model alias>   # 如 gpt-4o / claude-sonnet
-# 可选：
-# BLINDVAULT_EE_LICENSE=<license>          # 解锁 EE 本地模型网关
 ```
 
 > **安全铁律**：LiteLLM API key 只由部署方在 `.env` 中维护，绝不在任何 API/UI 中暴露或允许修改——要改 key 请直接编辑 `.env` 并重启。
@@ -219,12 +217,16 @@ Dockerfile.sandbox           # 隔离沙箱执行器镜像
 docker-compose.yml           # redis + postgres + sandbox + backend + frontend
 ```
 
-> **说明：** `backend/` 是改造前的实现，保留供参考。当前产品在 `blindvault_agent/`。前端核心标签页（凭证金库、脱敏规则、Agent 配置、审计日志）均已接入新 Agent；**企业版（PRO）** 区块对 license 功能做门禁——**本地模型网关** 在 EE license 下可用，而 SSO / 多模型 / 策略引擎 / 硬件设备为路线图上的占位。
+> **说明：** `backend/` 是改造前的实现，保留供参考。当前产品在 `blindvault_agent/`。**所有功能对所有用户开放，不区分社区版/企业版。** 前端标签页（凭证金库、脱敏规则、Agent 配置、审计日志、本地模型网关）均已接入 Agent；**Roadmap** 区块（SSO / 多模型 / 策略引擎 / 硬件设备）是尚未实现的占位项，显示为不可点。
 
 ## 路线图
 
 - LiteLLM 网关层独立 guardrail，作为应用内脱敏之外的网络层兜底（即从应用内移出的不可逆 PII 阻断，纵深防御）。
-- 企业版：SSO / RBAC、多模型路由策略、审计导出、硬件设备。
+- SSO / RBAC、多模型路由策略、审计导出、硬件设备。
+
+## 许可与支持
+
+BlindVault 基于 [AGPL-3.0](LICENSE) 完全开源——**所有功能免费，没有任何被锁的"企业版"层级**。如果你需要生产落地的帮助——部署、升级、SLA 技术支持、合规背书——这是我们的商业服务。软件保持开源，你只为服务付费。
 
 ## 许可
 

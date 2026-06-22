@@ -35,7 +35,6 @@ export function LocalModelConfig() {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // 配置状态
-  const [isEE, setIsEE] = useState(false);
   const [localModelUrl, setLocalModelUrl] = useState('');
   const [localModelName, setLocalModelName] = useState('qwen3:0.6b');
   const [localModelTimeout, setLocalModelTimeout] = useState(2.0);
@@ -50,7 +49,6 @@ export function LocalModelConfig() {
   useEffect(() => {
     setLoading(true);
     getLocalModelConfig().then((data) => {
-      setIsEE(data.is_ee);
       if (data.url) setLocalModelUrl(data.url);
       if (data.model_name) setLocalModelName(data.model_name);
       if (data.api_type) setLocalModelApiType(data.api_type);
@@ -142,40 +140,8 @@ export function LocalModelConfig() {
         </div>
       </div>
 
-      {/* 升级提示 (如果没有 EE) */}
-      {!isEE ? (
-        <div className="panel rounded-xl p-8 mb-8 text-center flex flex-col items-center justify-center border border-amber-500/20 bg-amber-500/5 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl -mr-10 -mt-10 pointer-events-none"></div>
-          <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center mb-4 border border-amber-500/20">
-            <Lock className="w-8 h-8 text-amber-500" />
-          </div>
-          <h2 className="text-xl font-bold text-on-surface mb-2">{t('config.localModelLockedTitle') || '升级 EE 解锁本地模型语义脱敏'}</h2>
-          <p className="text-sm text-on-surface-variant max-w-lg mx-auto mb-6">
-            {t('config.localModelLockedDesc') || '基础版仅支持正则表达式脱敏。启用企业版 (EE) License 后，您可接入本地部署的大语言模型（如 Ollama + Qwen），实现基于上下文的高级语义脱敏，在零数据泄露的情况下识别变体凭证。'}
-          </p>
-          <button className="px-6 py-2.5 rounded-lg bg-amber-500 text-white font-semibold shadow-sm hover:bg-amber-600 transition-colors pointer-events-none opacity-80">
-            {t('config.contactSales') || '联系获取 License'}
-          </button>
-        </div>
-      ) : (
-        <>
-          {/* License Active Banner */}
-          <div className="bg-[#FAF6F0] dark:bg-amber-900/10 border border-amber-500/20 rounded-xl p-5 mb-8 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-[#E8F5E9] dark:bg-green-900/20 flex items-center justify-center text-green-600 border border-transparent">
-                <CheckCircle2 className="w-6 h-6" />
-              </div>
-              <div>
-                <div className="text-base font-bold text-gray-900 dark:text-white">企业许可生效中</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">商业特许 License 状态：正常校验</div>
-              </div>
-            </div>
-            <div className="px-3 py-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-500 border border-amber-500/30 rounded-lg flex items-center gap-1.5 text-xs font-bold tracking-wide">
-              <Sparkles className="w-4 h-4" />
-              ENTERPRISE PRO
-            </div>
-          </div>
-
+      {/* Config content (all users) */}
+      <>
           {/* Connection Status Panel */}
           {(() => {
             let borderColor = 'border-l-4 border-l-gray-300';
@@ -412,8 +378,7 @@ export function LocalModelConfig() {
               </div>
             </div>
           </div>
-        </>
-      )}
+      </>
 
       {/* Error Alert */}
       {error && (
