@@ -100,6 +100,46 @@ collect_config() {
       success "Port ${port} available"
     fi
   done
+
+  # LLM gateway (LiteLLM-compatible /v1 endpoint)
+  echo ""
+  info "LLM gateway ${DIM}(LiteLLM-compatible, exposes /v1/chat/completions)${NC}"
+  info "${DIM}You can leave these blank now and fill them in .env later.${NC}"
+  ask "Gateway base URL (e.g. https://your-gateway/v1)" "" LITELLM_BASE_URL
+  ask "Virtual API key" "" LITELLM_API_KEY
+  ask "Default model alias (e.g. gpt-4o / claude-sonnet)" "" DEFAULT_MODEL
+
+  if [ -z "$LITELLM_BASE_URL" ] || [ -z "$LITELLM_API_KEY" ] || [ -z "$DEFAULT_MODEL" ]; then
+    warn "LLM gateway not fully set — edit .env (BLINDVAULT_LITELLM_*) and run: docker compose restart backend"
+  fi
+
+  # Build mirror source
+  echo ""
+  info "Image build mirrors ${DIM}(China mirrors speed up builds in mainland China)${NC}"
+  ask "Use China mirrors for image builds? [Y/n]" "Y" USE_CN_MIRROR_INPUT
+  case "$USE_CN_MIRROR_INPUT" in
+    [Nn]*) USE_CN_MIRROR="false" ;;
+    *)     USE_CN_MIRROR="true" ;;
+  esac
+  if [ "$USE_CN_MIRROR" = "true" ]; then
+    success "Mirror source: China (tuna / npmmirror)"
+  else
+    success "Mirror source: official (deb.debian.org / npmjs / pypi)"
+  fi
+
+  # Edition
+  echo ""
+  info "Edition ${DIM}(Enterprise unlocks the local-model sanitization gateway)${NC}"
+  ask "Enable Enterprise edition? [y/N]" "N" EE_INPUT
+  case "$EE_INPUT" in
+    [Yy]*) EE_LICENSE="enabled" ;;
+    *)     EE_LICENSE="" ;;
+  esac
+  if [ -n "$EE_LICENSE" ]; then
+    success "Edition: Enterprise (EE features unlocked)"
+  else
+    success "Edition: Community"
+  fi
 }
 
 # ============================================================
@@ -146,15 +186,25 @@ PG_PASSWORD=${PG_PASSWORD}
 FRONTEND_PORT=${FRONTEND_PORT}
 BACKEND_PORT=${BACKEND_PORT}
 
-# LLM — configure in Web UI → Agent Config after first login
-LLM_PROVIDER=mock
-LLM_MODEL=
-LLM_BASE_URL=
-LLM_API_KEY=
+# Build mirror source (true = China mirrors for faster image builds)
+USE_CN_MIRROR=${USE_CN_MIRROR}
+
+# Edition: a non-empty value unlocks Enterprise features (local-model gateway).
+# Operator-controlled only (this .env). Leave blank for Community edition.
+BLINDVAULT_EE_LICENSE=${EE_LICENSE}
+
+# LLM gateway (LiteLLM) — the API key lives ONLY here, never in the UI.
+# The default model can also be changed later in Web UI → Agent Config.
+BLINDVAULT_LITELLM_BASE_URL=${LITELLM_BASE_URL}
+BLINDVAULT_LITELLM_API_KEY=${LITELLM_API_KEY}
+BLINDVAULT_DEFAULT_MODEL=${DEFAULT_MODEL}
 
 # Infrastructure (internal, do not change)
+BLINDVAULT_REDIS_URL=redis://redis:6379/0
 REDIS_URL=redis://redis:6379/0
+BLINDVAULT_DATABASE_URL=postgresql://blindvault:${PG_PASSWORD}@postgres:5432/blindvault
 DATABASE_URL=postgresql://blindvault:${PG_PASSWORD}@postgres:5432/blindvault
+BLINDVAULT_SANDBOX_URL=http://sandbox:8001
 EOF
 
   chmod 600 .env
@@ -211,8 +261,8 @@ print_success() {
   echo -e "${GREEN}║${NC}  🌐 Open: ${BOLD}http://localhost:${FRONTEND_PORT}${NC}              ${GREEN}║${NC}"
   echo -e "${GREEN}║${NC}  📡 API:  ${BOLD}http://localhost:${BACKEND_PORT}/docs${NC}          ${GREEN}║${NC}"
   echo -e "${GREEN}║${NC}                                              ${GREEN}║${NC}"
-  echo -e "${GREEN}║${NC}  💡 ${DIM}Next: Open the URL above, go to${NC}           ${GREEN}║${NC}"
-  echo -e "${GREEN}║${NC}     ${DIM}Agent Config to set up your LLM.${NC}         ${GREEN}║${NC}"
+  echo -e "${GREEN}║${NC}  💡 ${DIM}Next: open the URL and start chatting.${NC}    ${GREEN}║${NC}"
+  echo -e "${GREEN}║${NC}     ${DIM}Change model in Agent Config anytime.${NC}     ${GREEN}║${NC}"
   echo -e "${GREEN}║${NC}                                              ${GREEN}║${NC}"
   echo -e "${GREEN}║${NC}  ${DIM}Stop:  docker compose down${NC}                  ${GREEN}║${NC}"
   echo -e "${GREEN}║${NC}  ${DIM}Logs:  docker compose logs -f${NC}               ${GREEN}║${NC}"

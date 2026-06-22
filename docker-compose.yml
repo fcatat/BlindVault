@@ -27,12 +27,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.sandbox
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     restart: unless-stopped
     expose:
       - "8001"
 
   backend:
-    build: .
+    build:
+      context: .
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     restart: unless-stopped
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -44,6 +49,8 @@ services:
       sandbox:
         condition: service_started
     env_file: .env
+    volumes:
+      - ./.env:/app/.env    # 挂载宿主机 .env，使 UI 保存的配置在容器重建后持久化
     environment:
       - BLINDVAULT_ENCRYPTION_KEY=${BLINDVAULT_ENCRYPTION_KEY}
       - REDIS_URL=redis://redis:6379/0
@@ -52,17 +59,17 @@ services:
       - BLINDVAULT_DATABASE_URL=postgresql://blindvault:${PG_PASSWORD:-blindvault_default_pg_pass}@postgres:5432/blindvault
       - SANDBOX_URL=http://sandbox:8001
       - BLINDVAULT_SANDBOX_URL=http://sandbox:8001
-      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        USE_CN_MIRROR: ${USE_CN_MIRROR:-true}
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       - backend
-    environment:
-      - VITE_API_BASE=http://backend:8000
 
 volumes:
   blindvault-redis:
