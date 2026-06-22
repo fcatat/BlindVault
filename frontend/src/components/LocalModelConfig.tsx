@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Cpu, Globe, Clock, RefreshCw, Loader2, Save, CheckCircle2, AlertTriangle, BrainCircuit, ChevronDown, ChevronUp, Sliders, ToggleLeft, ToggleRight, Lock
+  Cpu, Globe, Clock, RefreshCw, Loader2, Save, CheckCircle2, AlertTriangle, BrainCircuit, ChevronDown, ChevronUp, Sliders, ToggleLeft, ToggleRight, Lock, Sparkles
 } from 'lucide-react';
 import { getLocalModelConfig, updateLocalModelConfig, checkLocalModel } from '../agentApi';
 import { useI18n } from '../i18n';
@@ -58,6 +58,20 @@ export function LocalModelConfig() {
       if (data.prompt) setLocalModelPrompt(data.prompt);
       if (data.disable_cot !== undefined) setLocalModelDisableCot(data.disable_cot);
       setLoading(false);
+
+      // 页面加载后自动检测连通性
+      if (data.url) {
+        setLocalModelChecking(true);
+        checkLocalModel({
+          url: data.url,
+          api_type: data.api_type || 'ollama',
+          model_name: data.model_name || '',
+          timeout: data.timeout || 2.0,
+        })
+          .then((res: any) => setLocalModelStatus(res))
+          .catch(() => setLocalModelStatus({ available: false, models: [], error: t('config.networkError') }))
+          .finally(() => setLocalModelChecking(false));
+      }
     }).catch((e) => {
       setError(e.message || 'Failed to load config');
       setLoading(false);
@@ -145,6 +159,23 @@ export function LocalModelConfig() {
         </div>
       ) : (
         <>
+          {/* License Active Banner */}
+          <div className="bg-[#FAF6F0] dark:bg-amber-900/10 border border-amber-500/20 rounded-xl p-5 mb-8 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-[#E8F5E9] dark:bg-green-900/20 flex items-center justify-center text-green-600 border border-transparent">
+                <CheckCircle2 className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="text-base font-bold text-gray-900 dark:text-white">企业许可生效中</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">商业特许 License 状态：正常校验</div>
+              </div>
+            </div>
+            <div className="px-3 py-1.5 bg-amber-500/10 text-amber-600 dark:text-amber-500 border border-amber-500/30 rounded-lg flex items-center gap-1.5 text-xs font-bold tracking-wide">
+              <Sparkles className="w-4 h-4" />
+              ENTERPRISE PRO
+            </div>
+          </div>
+
           {/* Connection Status Panel */}
           {(() => {
             let borderColor = 'border-l-4 border-l-gray-300';

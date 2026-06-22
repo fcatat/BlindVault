@@ -352,6 +352,25 @@ const translations = {
     'chat.toolLogsPanelDesc': '实时安全策略校验与本地工具执行日志。',
     'chat.noToolCalls': '🤖 暂无工具调用记录',
     'chat.noToolCallsDesc': '在左侧发送包含指令的消息（如 SSH 远程命令或数据库查询），安全执行引擎将在右侧展示对应的凭证脱敏与命令执行轨迹。',
+    
+    // Audit Log
+    'audit.title': '审计日志',
+    'audit.subtitle': '审计日志为只读，无法通过界面或 API 删除（合规要求）。',
+    'audit.actor': '操作者 (Actor)',
+    'audit.action': '动作 (Action)',
+    'audit.target': '目标 (Target)',
+    'audit.details': '详情 (Details摘要)',
+    'audit.timestamp': '时间 (Timestamp)',
+    'audit.filterActor': '操作者...',
+    'audit.filterAction': '所有动作',
+    'audit.filterFrom': '开始时间',
+    'audit.filterTo': '结束时间',
+    'audit.prevPage': '上一页',
+    'audit.nextPage': '下一页',
+    'audit.loading': '加载中...',
+    'audit.empty': '暂无审计记录',
+    'audit.detailsJson': '完整详情 JSON',
+    'audit.close': '关闭',
   },
   en: {
     // Sidebar
@@ -701,6 +720,25 @@ const translations = {
     'chat.toolLogsPanelDesc': 'Live safety policy evaluation and tool execution logs.',
     'chat.noToolCalls': '🤖 No tool calls yet',
     'chat.noToolCallsDesc': 'Send a message containing commands (e.g., SSH command or DB query) on the left, and the secure engine will show credential redaction and execution traces here.',
+    
+    // Audit Log
+    'audit.title': 'Audit Log',
+    'audit.subtitle': 'Audit Log is read-only, cannot be deleted via UI or API (Compliance).',
+    'audit.actor': 'Actor',
+    'audit.action': 'Action',
+    'audit.target': 'Target',
+    'audit.details': 'Details (Snippet)',
+    'audit.timestamp': 'Timestamp',
+    'audit.filterActor': 'Actor...',
+    'audit.filterAction': 'All Actions',
+    'audit.filterFrom': 'From Date',
+    'audit.filterTo': 'To Date',
+    'audit.prevPage': 'Previous',
+    'audit.nextPage': 'Next',
+    'audit.loading': 'Loading...',
+    'audit.empty': 'No audit records',
+    'audit.detailsJson': 'Full Details JSON',
+    'audit.close': 'Close',
   },
 } as const;
 

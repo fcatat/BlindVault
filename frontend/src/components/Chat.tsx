@@ -1203,6 +1203,10 @@ function ToolLogsPanel({
           const toolCall = msg.toolCalls![0];
           // 尝试从 args 中提取，或者从命令内容中正则匹配出内联的 secret_ref
           let secretRef = msg.secretRefs && msg.secretRefs.length > 0 ? msg.secretRefs[0] : null;
+          if (!secretRef && toolCall.args?.secret_ref) {
+            const match = toolCall.args.secret_ref.match(/sec_(?:live|test)_[A-Za-z0-9_-]+/);
+            if (match) secretRef = match[0];
+          }
           if (!secretRef && toolCall.args?.command) {
             const match = toolCall.args.command.match(/sec_(?:live|test)_[A-Za-z0-9_-]+/);
             if (match) secretRef = match[0];

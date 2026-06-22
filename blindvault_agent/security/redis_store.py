@@ -70,6 +70,18 @@ class SecretStore:
         except Exception as e:
             logger.error(f"PG 写入失败 (save_secret hook): {e}")
 
+        try:
+            from blindvault_agent.security.audit import log_event
+            await log_event(
+                actor=record.user_id,
+                action="secret.create",
+                target_type="secret",
+                target_id=record.secret_ref,
+                details={"label": record.label, "secret_type": record.secret_type.value}
+            )
+        except Exception as e:
+            pass
+
         logger.info("Secret 已保存: ref=%s (label=%s)", record.secret_ref[:12] + "****", record.label)
 
     async def get_secret(self, secret_ref: str) -> Optional[SecretRecord]:
@@ -118,6 +130,17 @@ class SecretStore:
         except Exception as e:
             logger.error(f"PG 写入失败 (revoke_secret hook): {e}")
 
+        try:
+            from blindvault_agent.security.audit import log_event
+            await log_event(
+                actor="system",
+                action="secret.revoke",
+                target_type="secret",
+                target_id=secret_ref
+            )
+        except Exception as e:
+            pass
+
         logger.info("Secret 已撤销: ref=%s", secret_ref[:12] + "****")
         return True
 
@@ -131,6 +154,23 @@ class SecretStore:
             await update_archive_status(secret_ref, status.value)
         except Exception as e:
             logger.error(f"PG 写入失败 (update_status hook): {e}")
+
+        try:
+            from blindvault_agent.security.audit import log_event
+            action_map = {
+                SecretStatus.EXPIRED: "secret.expire",
+                SecretStatus.EXHAUSTED: "secret.exhaust",
+                SecretStatus.REVOKED: "secret.revoke"
+            }
+            action_str = action_map.get(status, "secret.update_status")
+            await log_event(
+                actor="system",
+                action=action_str,
+                target_type="secret",
+                target_id=secret_ref
+            )
+        except Exception as e:
+            pass
 
     async def list_secrets(
         self, user_id: str

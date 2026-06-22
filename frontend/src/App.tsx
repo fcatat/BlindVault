@@ -8,6 +8,7 @@ import { RulesConfig } from './components/RulesConfig';
 import { AgentConfig } from './components/AgentConfig';
 import { LocalModelConfig } from './components/LocalModelConfig';
 import { EnterprisePlaceholder } from './components/EnterprisePlaceholder';
+import { AuditLog } from './components/AuditLog';
 import { AddCredentialModal } from './components/AddCredentialModal';
 import { ViewState } from './types';
 import { checkEEStatus, type EEStatus } from './api';
@@ -154,7 +155,7 @@ export default function App() {
           {/* 企业版独立路由页面 */}
           {activeView === 'local_model' && <LocalModelConfig />}
           {activeView === 'sso' && <EnterprisePlaceholder viewType="sso" />}
-          {activeView === 'audit' && <EnterprisePlaceholder viewType="audit" />}
+          {activeView === 'audit' && <AuditLog />}
           {activeView === 'multi_model' && <EnterprisePlaceholder viewType="multi_model" />}
           {activeView === 'policy' && <EnterprisePlaceholder viewType="policy" />}
           {activeView === 'hardware' && <EnterprisePlaceholder viewType="hardware" />}

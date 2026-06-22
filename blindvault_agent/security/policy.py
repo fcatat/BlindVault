@@ -107,7 +107,7 @@ async def resolve_secret(
     # 1. 检查 secret 存在性
     record = await store.get_secret(secret_ref)
     if record is None:
-        logger.warning("Secret 解析失败: ref 不存在")
+        logger.warning(f"Secret 解析失败: ref 不存在 ({secret_ref})")
         raise SecretResolutionError("not_found")
 
     # 2. 检查 status
@@ -185,5 +185,17 @@ async def resolve_secret(
         new_count,
         record.max_reads,
     )
+
+    try:
+        from blindvault_agent.security.audit import log_event
+        await log_event(
+            actor=ctx.user_id,
+            action="secret.read",
+            target_type="secret",
+            target_id=secret_ref,
+            details={"tool_name": ctx.tool_name}
+        )
+    except Exception as e:
+        pass
 
     return plaintext

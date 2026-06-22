@@ -123,6 +123,12 @@ export function Sidebar({
           isActive={activeView === 'config'} 
           onClick={() => onNavigate('config')} 
         />
+        <NavItem 
+          icon={<ClipboardList className="w-4 h-4" />} 
+          label={t('sidebar.auditLog')}
+          isActive={activeView === 'audit'}
+          onClick={() => onNavigate('audit')}
+        />
 
 
         {/* Enterprise Section */}
@@ -151,13 +157,7 @@ export function Sidebar({
           isActive={activeView === 'sso'}
           onClick={() => onNavigate('sso')}
         />
-        <EnterpriseNavItem 
-          icon={<ClipboardList className="w-4 h-4" />} 
-          label={t('sidebar.auditLog')}
-          licensed={!!eeStatus?.licensed}
-          isActive={activeView === 'audit'}
-          onClick={() => onNavigate('audit')}
-        />
+
         <EnterpriseNavItem 
           icon={<Layers className="w-4 h-4" />} 
           label={t('sidebar.multiModel')}

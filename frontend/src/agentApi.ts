@@ -213,3 +213,37 @@ export async function checkLocalModel(config: any): Promise<any> {
   if (!res.ok) throw new Error('Failed to check local model');
   return res.json();
 }
+
+// ---- Audit Log ----
+export interface AuditEvent {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  details: any;
+  ip: string;
+}
+
+export async function getAuditLog(params: {
+  actor?: string;
+  action?: string;
+  target_type?: string;
+  ts_from?: string;
+  ts_to?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ items: AuditEvent[], total: number }> {
+  const query = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '') {
+      query.set(k, String(v));
+    }
+  }
+  const res = await fetch(`${API_BASE}/audit-log?${query}`, {
+    headers: getHeaders(),
+  });
+  if (!res.ok) throw new Error('Failed to fetch audit log');
+  return res.json();
+}

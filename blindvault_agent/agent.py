@@ -187,8 +187,9 @@ class BlindVaultAgent:
             current_ctx.reset(token_ctx)
             current_executor.reset(token_exec)
 
-    async def astream_events(self, input: Any, config: dict | None = None, **kwargs) -> AsyncIterator[Any]:
-        input = self._pre_sanitize(input)
+    async def astream_events(self, input: Any, config: dict | None = None, *, skip_pre_sanitize: bool = False, **kwargs) -> AsyncIterator[Any]:
+        if not skip_pre_sanitize:
+            input = self._pre_sanitize(input)
         config = self._inject_configurable(config)
 
         t_store = self.store

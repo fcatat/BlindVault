@@ -372,13 +372,15 @@ export interface EEStatus {
 
 export async function checkEEStatus(): Promise<EEStatus> {
   try {
-    const res = await fetch(`${API_BASE}/ee/status`, {
+    const res = await fetch(`${API_BASE}/local-model/config`, {
       headers: DEFAULT_HEADERS,
+      cache: 'no-store',
     });
     if (!res.ok) {
       return { edition: 'community', licensed: false, features: [] };
     }
-    return res.json();
+    const data = await res.json();
+    return { edition: data.is_ee ? 'enterprise' : 'community', licensed: data.is_ee, features: [] };
   } catch {
     return { edition: 'community', licensed: false, features: [] };
   }

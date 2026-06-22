@@ -80,10 +80,34 @@ async def chat_stream_endpoint(message: str, thread_id: str):
     
     async def event_generator():
         try:
+            # Emit sanitized event early by mocking what _pre_sanitize does
+            from blindvault_agent.middleware.reversible_sanitize import ReversibleSanitizeMiddleware
+            from langchain_core.messages import HumanMessage
+
+            # 同步中间件的 session/user 标识到当前请求，
+            # 确保保存的 secret 可按 session_id 被工具的 fallback 精确匹配
+            agent.sanitize_mw._session_id = thread_id
+            agent.sanitize_mw._user_id = "system"
+
+            temp_state = {"messages": [HumanMessage(content=message)]}
+            res = agent.sanitize_mw.before_model(temp_state)
+            sanitized_input = res["messages"][0].content if res and res.get("messages") else message
+            
+            # Save refs for 'done' event
+            seen_refs = set()
+            import re
+            for match in re.finditer(r"\{\{secret:(sec_(?:live|test)_[A-Za-z0-9_-]+)\}\}", sanitized_input):
+                seen_refs.add(match.group(1))
+            agent.sanitize_mw._last_secret_refs = seen_refs
+
+            yield f"data: {json.dumps({'type': 'sanitized', 'data': {'sanitized_input': sanitized_input, 'local_model_configured': getattr(agent.sanitize_mw, '_use_local_model_cache', False)}})}\n\n"
+
+            # 传入已脱敏的消息，跳过 _pre_sanitize 避免双重脱敏
             async for event in agent.astream_events(
-                {"messages": [{"role": "user", "content": message}]},
+                {"messages": [{"role": "user", "content": sanitized_input}]},
                 config=config,
-                version="v2"
+                version="v2",
+                skip_pre_sanitize=True,
             ):
                 kind = event["event"]
                 
@@ -144,7 +168,11 @@ async def chat_stream_endpoint(message: str, thread_id: str):
                 interrupt_val = pending_interrupts[0].value
                 yield f"data: {json.dumps({'type': 'interrupt', 'data': {'pending_command': interrupt_val.get('command'), 'risk_description': interrupt_val.get('risk_description')}})}\n\n"
             else:
-                yield f"data: {json.dumps({'type': 'done', 'data': {}})}\n\n"
+                done_data = {
+                    "secret_refs_used": list(getattr(agent.sanitize_mw, "_last_secret_refs", set())),
+                    "local_model_configured": getattr(agent.sanitize_mw, "_use_local_model_cache", False)
+                }
+                yield f"data: {json.dumps({'type': 'done', 'data': done_data})}\n\n"
                 
             try:
                 from blindvault_agent.security.audit import log_event
@@ -749,6 +777,12 @@ async def upgrade_sandbox():
 
 from blindvault_agent.security.redis_store import get_redis_client, get_store
 
+@app.get("/health")
+async def health():
+    """轻量存活探针：进程起来即返回 200，供 install.sh / 编排器健康检查使用。"""
+    return {"status": "ok"}
+
+
 @app.get("/api/agent-health")
 async def get_agent_health():
     global _health_cache
@@ -852,19 +886,52 @@ async def update_local_model_config(req: LocalModelConfigUpdate):
     if req.local_model_api_type is not None:
         if req.local_model_api_type not in ("ollama", "openai", "custom_fastapi"):
             raise HTTPException(status_code=400, detail="Invalid API type")
-            
+
+    import os
+
+    def _set_env_key(key: str, value: str):
+        """直接读写 .env 文件，绕过 dotenv.set_key 的 os.replace 在 Docker bind mount 上的 OSError。"""
+        os.environ[key] = value
+        env_path = "/app/.env"
+        try:
+            with open(env_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            lines = []
+
+        # 对含换行符或特殊字符的值用双引号包裹，换行转义为 \n
+        safe_value = value
+        if '\n' in value or '\r' in value or '"' in value or "'" in value:
+            safe_value = '"' + value.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\r', '') + '"'
+
+        new_line = f"{key}={safe_value}\n"
+        found = False
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+                lines[i] = new_line
+                found = True
+                break
+        if not found:
+            if lines and not lines[-1].endswith("\n"):
+                lines.append("\n")
+            lines.append(new_line)
+
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+
     if req.local_model_url is not None:
-        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_URL", req.local_model_url)
+        _set_env_key("BLINDVAULT_LOCAL_MODEL_URL", req.local_model_url)
     if req.local_model_name is not None:
-        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_NAME", req.local_model_name)
+        _set_env_key("BLINDVAULT_LOCAL_MODEL_NAME", req.local_model_name)
     if req.local_model_api_type is not None:
-        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_API_TYPE", req.local_model_api_type)
+        _set_env_key("BLINDVAULT_LOCAL_MODEL_API_TYPE", req.local_model_api_type)
     if req.local_model_timeout is not None:
-        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_TIMEOUT", str(req.local_model_timeout))
+        _set_env_key("BLINDVAULT_LOCAL_MODEL_TIMEOUT", str(req.local_model_timeout))
     if req.local_model_prompt is not None:
-        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_PROMPT", req.local_model_prompt)
+        _set_env_key("BLINDVAULT_LOCAL_MODEL_PROMPT", req.local_model_prompt)
     if req.local_model_disable_cot is not None:
-        dotenv.set_key(".env", "BLINDVAULT_LOCAL_MODEL_DISABLE_COT", str(req.local_model_disable_cot).lower())
+        _set_env_key("BLINDVAULT_LOCAL_MODEL_DISABLE_COT", str(req.local_model_disable_cot).lower())
         
     # Reload settings singleton cache
     from blindvault_agent.ee.local_model.settings import get_local_model_settings

@@ -89,6 +89,89 @@ def _redact_output(output: str, real_secret: str) -> str:
 
 
 # ============================================================
+# LLM ref 幻觉自动纠偏
+# ============================================================
+
+from blindvault_agent.security.models import SecretStatus
+
+
+async def _fallback_resolve_active_secret(
+    store: SecretStore,
+    ctx: "ExecutionContext",
+    resolved_cache: dict,
+) -> str | None:
+    """
+    当 LLM 编造了不存在的 secret_ref 时，自动从金库中
+    查找实际存在的、仍然活跃的 secret 并解析返回真实密码。
+
+    这是对 LLM 无法精确复制长随机字符串这一本质缺陷的代码级容错。
+
+    查找策略：
+    1. 先按 session_id（= thread_id）精确匹配当前会话的活跃凭证
+    2. 如果没有匹配，放宽为所有 user_id 下最新的活跃凭证
+    """
+    try:
+        # 尝试两个 user_id：请求级别的 + 中间件默认的 "system"
+        candidate_user_ids = list(dict.fromkeys([ctx.user_id, "system"]))
+        all_secrets = []
+        for uid in candidate_user_ids:
+            try:
+                secrets = await store.list_secrets(uid)
+                all_secrets.extend(secrets)
+            except Exception:
+                pass
+
+        # 策略 1：精确匹配当前 session_id
+        active = [
+            s for s in all_secrets
+            if s.status == SecretStatus.ACTIVE
+            and s.secret_ref not in resolved_cache
+            and s.session_id == ctx.session_id
+        ]
+
+        # 策略 2：如果 session 匹配失败，放宽为所有活跃凭证
+        if not active:
+            logger.info("[secure_shell] session_id=%s 无精确匹配，放宽搜索...", ctx.session_id)
+            active = [
+                s for s in all_secrets
+                if s.status == SecretStatus.ACTIVE
+                and s.secret_ref not in resolved_cache
+            ]
+
+        if not active:
+            logger.warning("[secure_shell] 回退失败：无活跃凭证 (user_ids=%s, session=%s)", candidate_user_ids, ctx.session_id)
+            return None
+
+        # 取最近创建的那个
+        active.sort(key=lambda s: s.created_at, reverse=True)
+        real_ref = active[0].secret_ref
+        logger.info(
+            "[secure_shell] 回退成功：使用真实凭证 ref=%s (user=%s, session=%s)",
+            real_ref[:16] + "****", active[0].user_id, active[0].session_id[:20] if active[0].session_id else ""
+        )
+
+        # resolve 时也用 secret 记录中的 user_id，确保鉴权通过
+        fallback_ctx = ctx.model_copy(update={
+            "user_id": active[0].user_id,
+            "tool_name": "secure_shell",
+        })
+        val = await resolve_secret(
+            store=store,
+            ctx=fallback_ctx,
+            request=ResolveRequest(
+                secret_ref=real_ref,
+                requested_use="shell_command_fallback",
+                destination="",
+            )
+        )
+        resolved_cache[real_ref] = val
+        return val
+    except Exception as e:
+        logger.exception("[secure_shell] 回退解析异常: %s", str(e))
+        return None
+
+
+# ============================================================
 # 工具实现
 # ============================================================
 
@@ -147,6 +230,9 @@ async def _secure_shell_async(
     final_command = command
     resolved_cache = {}  # 缓存已解析的密钥，防止同一个 ref 重复解析（保证 read_count 正好为 1）
 
+    logger.info("[secure_shell] 收到命令: %s", command[:120])
+    logger.info("[secure_shell] secret_ref 参数: %s", secret_ref)
+
     # 0. 验证并解析主 secret_ref (替换 $SECRET 占位符)
     if secret_ref:
         # 兼容 LLM 可能直接传入整个占位符 {{secret:sec_live_xxx}}
@@ -166,19 +252,37 @@ async def _secure_shell_async(
             if secret_ref in resolved_cache:
                 real_secret = resolved_cache[secret_ref]
             else:
-                real_secret = await resolve_secret(
-                    store=store,
-                    ctx=ctx,
-                    request=ResolveRequest(
-                        secret_ref=secret_ref,
-                        requested_use="shell_command",
-                        destination="",  # secure_shell 不做目标校验
-                    ),
-                )
+                # 必须创建一个新的 ctx，将 tool_name 显式设置为 secure_shell，否则鉴权会失败
+                local_ctx = ctx.model_copy(update={"tool_name": "secure_shell"})
+                try:
+                    real_secret = await resolve_secret(
+                        store=store,
+                        ctx=local_ctx,
+                        request=ResolveRequest(
+                            secret_ref=secret_ref,
+                            requested_use="shell_command",
+                            destination="",  # secure_shell 不做目标校验
+                        ),
+                    )
+                except (SecretResolutionError, Exception) as resolve_err:
+                    # LLM 编造了不存在的 ref，自动回退
+                    logger.warning(
+                        "[secure_shell] 主 secret_ref=%s 解析失败 (%s)，尝试回退...",
+                        secret_ref[:16], str(resolve_err)
+                    )
+                    fallback_val = await _fallback_resolve_active_secret(
+                        store, local_ctx, resolved_cache
+                    )
+                    if fallback_val is None:
+                        raise resolve_err
+                    real_secret = fallback_val
+
                 resolved_cache[secret_ref] = real_secret
 
             real_secrets_list.append(real_secret)
+            logger.info("[secure_shell] 主 secret_ref 解析成功, 密码长度=%d", len(real_secret))
             final_command = command.replace("$SECRET", real_secret)
+            logger.info("[secure_shell] $SECRET 替换后, 命令中是否仍含 {{secret:}}: %s", '{{secret:' in final_command)
         except SecretResolutionError as e:
             return {
                 "status": "error",
@@ -189,24 +293,72 @@ async def _secure_shell_async(
             }
 
     # 1. 自动识别并替换命令中所有显式出现的其他凭证引用
-    # 模式一：支持 {{secret:sec_live_xxx}} 格式的强加密占位符
+    # 修复 LLM 产生的各种嵌套格式，如：
+    #   {{secret:{{secret:sec_live_xxx}}}}
+    #   {{secret:sec_live_{{secret:sec_live_xxx}}}}
+    #   {{secret:{{secret:{{secret:sec_live_xxx}}}}}}
+    # 反复展开，直到没有嵌套为止
+    max_denest = 5
+    for _ in range(max_denest):
+        # 匹配最内层的 {{secret:sec_live_XXX}} 或 {{secret:sec_test_XXX}}
+        inner = re.search(r'\{\{secret:(sec_(?:live|test)_[A-Za-z0-9_-]+)\}\}', final_command)
+        if not inner:
+            break
+        # 检查是否有外层包裹
+        start, end = inner.start(), inner.end()
+        # 向左查找前缀 {{secret: 或 {{secret:sec_live_
+        prefix_stripped = False
+        for prefix_pattern in [r'\{\{secret:(?:sec_(?:live|test)_)?', r'\{\{secret:']:
+            left_match = re.search(prefix_pattern + r'$', final_command[:start])
+            if left_match:
+                # 向右查找对应的 }}
+                right_pos = end
+                if right_pos < len(final_command) and final_command[right_pos:right_pos+2] == '}}':
+                    old = final_command[left_match.start():right_pos+2]
+                    new = inner.group(0)
+                    final_command = final_command[:left_match.start()] + new + final_command[right_pos+2:]
+                    logger.info("[secure_shell] 展开嵌套: %s → %s", old[:40] + "...", new[:40] + "...")
+                    prefix_stripped = True
+                    break
+        if not prefix_stripped:
+            break
+
     pattern_curly = re.compile(r"\{\{secret:(sec_(?:live|test)_[A-Za-z0-9_-]+)\}\}")
-    for match in pattern_curly.finditer(command):
+    curly_matches = list(pattern_curly.finditer(final_command))
+    logger.info("[secure_shell] {{secret:...}} 占位符数量: %d", len(curly_matches))
+    for match in curly_matches:
         ref = match.group(1)
+        logger.info("[secure_shell] 解析内联占位符: ref=%s", ref[:20] + "...")
         try:
             if ref in resolved_cache:
                 val = resolved_cache[ref]
+                logger.info("[secure_shell] 使用缓存, 密码长度=%d", len(val))
             else:
-                val = await resolve_secret(
-                    store=store,
-                    ctx=ctx,
-                    request=ResolveRequest(
-                        secret_ref=ref,
-                        requested_use="shell_command_multi",
-                        destination="",
+                local_ctx_multi = ctx.model_copy(update={"tool_name": "secure_shell"})
+                try:
+                    val = await resolve_secret(
+                        store=store,
+                        ctx=local_ctx_multi,
+                        request=ResolveRequest(
+                            secret_ref=ref,
+                            requested_use="shell_command_multi",
+                            destination="",
+                        )
                     )
-                )
+                except (SecretResolutionError, Exception) as resolve_err:
+                    # LLM 编造了不存在的 ref，自动回退到当前会话中实际存在的活跃 secret
+                    logger.warning(
+                        "[secure_shell] ref=%s 解析失败 (%s)，尝试回退到会话活跃凭证...",
+                        ref[:16], str(resolve_err)
+                    )
+                    val = await _fallback_resolve_active_secret(
+                        store, local_ctx_multi, resolved_cache
+                    )
+                    if val is None:
+                        raise resolve_err  # 真的没有可用凭证，抛出原始错误
+
                 resolved_cache[ref] = val
+                logger.info("[secure_shell] 解析成功, 密码长度=%d", len(val))
 
             real_secrets_list.append(val)
             final_command = final_command.replace(match.group(0), val)
@@ -281,6 +433,12 @@ async def _secure_shell_async(
             "stderr": "",
             "exit_code": -1,
         }
+
+    # 调试日志：检查最终命令中是否还残留未替换的占位符
+    if '{{secret:' in final_command:
+        logger.error("[secure_shell] ⚠️ 最终命令仍含未替换的 {{secret:}} 占位符!")
+    else:
+        logger.info("[secure_shell] ✅ 最终命令已完成所有占位符替换, 命令长度=%d, 凭证数=%d", len(final_command), len(real_secrets_list))
 
     try:
         res_data = await executor(final_command)

@@ -1,5 +1,21 @@
 # BlindVault MVP 进度与交接日志
 
+## 2026-06-22 14:30 — Cursor (Claude Opus 4.8)
+- 当前任务：对齐 README + 修复 docker 一键启动 + 前端生产构建 + 镜像源/版本可选
+- 完成度：done（已提交部署/文档部分，见下"提交"）
+- 动过的文件：
+  - `README.md` / `README_CN.md`：同步当前架构（单层脱敏、PII 兜底已废弃、EE 本地模型、审计日志、PG 归档、沙箱、docker-compose 为主部署路径）。
+  - `install.sh`：新增 LiteLLM 网关三项交互、镜像源选择、版本（EE）选择；写入 `.env` 的 `BLINDVAULT_LITELLM_*` / `USE_CN_MIRROR` / `BLINDVAULT_EE_LICENSE`；清理旧 `LLM_*` 死变量。
+  - `.env.example`：对齐 `blindvault_agent` 实际读取的环境变量。
+  - `frontend/Dockerfile` + 新增 `frontend/nginx.conf`：改为多阶段 `vite build` + nginx 静态托管，nginx 反代 `/api`、`/health` 到 backend（SSE 关闭缓冲）。
+  - `Dockerfile` / `Dockerfile.sandbox` / `frontend/Dockerfile`：加 `USE_CN_MIRROR` ARG 条件化镜像源。
+  - `docker-compose.yml`：传 `USE_CN_MIRROR` build args；删除死变量 `VITE_API_BASE` / `LLM_PROVIDER`。
+  - `blindvault_agent/web.py`：加了轻量 `/health` 存活端点（**本次未提交**，随 web.py 其余历史待提交改动一起提交）。
+- 卡点/注意：
+  - `web.py` 的 `/health` 与该文件历史改动在同一文件，本次部署提交未纳入 web.py；install.sh 轮询的 `/health` 需 web.py 提交/部署后才在仓库内一致。
+  - 安全关键文件 `policy.py` / `secure_shell.py` 仍有历史待提交改动，未复审，本次未提交。
+- 提交：部署/文档部分见本次 commit；其余历史待提交改动（含安全关键）待复审后单独提交。
+
 ## 2026-06-18 15:12 — Antigravity (Gemini 3.1 Pro)
 - 当前任务：回滚正则硬编码，修复本地模型（EE功能）脱敏拦截状态在 UI 前端徽章不显示的问题。
 - 完成度：done
@@ -744,3 +760,6 @@
 - 下一步具体动作：开始 Phase 0 Spike（#13）—— 起最小 LiteLLM（GPT+Claude alias）+ create_agent dummy 工具，验四条排雷项
 - 卡点/注意：安全关键代码（脱敏 middleware / resolve_secret）必须强模型 review，勿便宜模型直接提交
 - 提交：未提交
+
+- 2026-06-18: Fixed SecretResolutionError caused by empty tool_name in ExecutionContext. Updated secure_shell.py to explicitly set ctx.tool_name='secure_shell' before calling resolve_secret.
+- 2026-06-18: Updated AgentSettings system_prompt to explicitly require sshpass for password injection and clarify dynamic secret_ref format, fixing issues where the LLM omitted password during SSH.

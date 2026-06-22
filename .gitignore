@@ -38,6 +38,11 @@ Thumbs.db
 # 本地开发 Docker Compose 覆盖配置
 docker-compose.override.yml
 
-# 诊断/草稿目录
+# 诊断/草稿目录与文件
 scratch/
+scratch*.py
+test_stream.py
+
+# 本地 SQLite 数据库
+*.sqlite3
 
